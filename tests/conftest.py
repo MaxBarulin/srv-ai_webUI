@@ -12,6 +12,12 @@ import tempfile
 _TMP_DATA = tempfile.mkdtemp(prefix="srv-ai-ui-test-")
 os.environ["DATA_DIR"] = _TMP_DATA
 
+import bcrypt as _bcrypt
+
+# Speed up tests: minimal bcrypt cost (checkpw reads rounds from the hash itself)
+_orig_gensalt = _bcrypt.gensalt
+_bcrypt.gensalt = lambda *a, **kw: _orig_gensalt(rounds=4)
+
 import pytest
 from fastapi.testclient import TestClient
 

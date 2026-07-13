@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import BASE_DIR
 from app.db import init_db
+from app.routers import admin as admin_router
 from app.routers import auth as auth_router
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -44,6 +45,7 @@ async def health() -> dict:
 
 
 app.include_router(auth_router.router)
+app.include_router(admin_router.router)
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
