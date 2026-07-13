@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import BASE_DIR
 from app.db import init_db
+from app.routers import auth as auth_router
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -40,6 +41,9 @@ async def security_headers_and_csrf(request: Request, call_next):
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+app.include_router(auth_router.router)
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
