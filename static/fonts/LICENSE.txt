@@ -1,0 +1,12 @@
+Шрифты в этом каталоге распространяются по свободным лицензиям:
+
+- Oswald (oswald-*.woff2)
+  Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)
+  Лицензия: SIL Open Font License 1.1 (https://openfontlicense.org)
+
+- PT Sans (ptsans-*.woff2)
+  Copyright © 2009 ParaType Ltd. Designed by A. Korolkova, O. Umpeleva, V. Yefimov.
+  Лицензия: SIL Open Font License 1.1 / ParaType Free Font License
+
+Файлы получены из дистрибутива Google Fonts (сабсеты cyrillic и latin, формат WOFF2)
+и размещены локально для работы в закрытом контуре (без внешних загрузок).

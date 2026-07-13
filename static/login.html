@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — srv-ai</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="brand">
+      <img src="/static/img/logo.svg" alt="ОСК Адмиралтейские верфи">
+    </div>
+    <h1>Рабочее место ИИ</h1>
+    <form id="login-form" method="post">
+      <label for="login">Логин</label>
+      <input type="text" id="login" name="login" autocomplete="username" required autofocus>
+      <label for="password">Пароль</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <div class="login-error" id="login-error"></div>
+      <div class="login-actions">
+        <button type="submit" class="btn btn-primary" id="login-btn">Войти</button>
+      </div>
+    </form>
+    <div class="login-notice">
+      Запрещён ввод сведений, составляющих государственную тайну.
+      Ответы Системы носят рекомендательный характер и подлежат проверке специалистом.
+    </div>
+  </div>
+  <script type="module" src="/static/js/login.js"></script>
+</body>
+</html>

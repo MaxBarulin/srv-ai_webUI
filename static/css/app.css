@@ -1,0 +1,337 @@
+/* ===== Фирменный стиль ОСК / Адмиралтейские верфи (TZ §9) ===== */
+
+/* --- Шрифты (локальные, /static/fonts) --- */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 500 600;
+  font-display: swap;
+  src: url("/static/fonts/oswald-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 500 600;
+  font-display: swap;
+  src: url("/static/fonts/oswald-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/ptsans-400-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/ptsans-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/ptsans-700-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/ptsans-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* --- Токены --- */
+:root {
+  --osk-red: #BE1E2D;
+  --osk-red-dark: #9E1826;
+  --osk-slate: #5B6670;
+  --osk-dark: #1E2A33;
+  --osk-dark-2: #162027;
+  --osk-paper: #FFFFFF;
+  --osk-bg: #F4F5F6;
+  --osk-line: #D9DDE0;
+  --font-display: "Oswald", "PT Sans Narrow", "Arial Narrow", sans-serif;
+  --font-text: "PT Sans", "Segoe UI", Arial, sans-serif;
+  --cut: 14px; /* величина диагонального среза */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: var(--font-text);
+  font-size: 15px;
+  color: #22292E;
+  background: var(--osk-bg);
+}
+
+h1, h2, h3, .display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--osk-dark);
+}
+
+/* Линия-«галс» у заголовков разделов */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 20px;
+  font-size: 20px;
+}
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--osk-red) 0 42px, var(--osk-line) 42px);
+}
+
+/* --- Кнопки --- */
+.btn {
+  display: inline-block;
+  padding: 9px 20px;
+  border: 1px solid transparent;
+  font-family: var(--font-text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--osk-paper);
+  color: var(--osk-dark);
+  border-color: var(--osk-line);
+}
+.btn:hover { border-color: var(--osk-slate); }
+.btn-primary {
+  background: var(--osk-red);
+  color: #fff;
+  border-color: var(--osk-red);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+.btn-primary:hover { background: var(--osk-red-dark); border-color: var(--osk-red-dark); }
+.btn-small { padding: 5px 12px; font-size: 13px; font-weight: 400; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+/* --- Поля форм --- */
+label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--osk-slate); }
+input[type="text"], input[type="password"], select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  font-family: var(--font-text);
+  font-size: 15px;
+  color: #22292E;
+}
+input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; border-color: var(--osk-red); }
+
+/* --- Карточка со скошенным срезом --- */
+.card {
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  padding: 24px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%);
+}
+
+/* ===== Страница входа ===== */
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--osk-dark);
+  background-image: linear-gradient(135deg, var(--osk-dark-2) 0%, var(--osk-dark) 55%, #263540 100%);
+}
+.login-card {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  background: var(--osk-paper);
+  padding: 0 32px 28px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%);
+}
+.login-card .brand {
+  margin: 0 -32px 24px;
+  padding: 20px 32px 16px;
+  background: var(--osk-dark);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), 0 100%);
+}
+.login-card .brand img { height: 40px; display: block; }
+.login-card h1 { font-size: 18px; margin: 0 0 4px; }
+.login-error {
+  margin-top: 14px;
+  padding: 9px 12px;
+  background: #FBEBEC;
+  border-left: 3px solid var(--osk-red);
+  color: var(--osk-red-dark);
+  font-size: 13px;
+  display: none;
+}
+.login-error.visible { display: block; }
+.login-actions { margin-top: 20px; }
+.login-notice {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--osk-line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--osk-slate);
+}
+
+/* ===== Каркас приложения ===== */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+/* --- Сайдбар --- */
+.sidebar {
+  background: var(--osk-dark);
+  color: #C7CDD2;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar .brand {
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sidebar .brand img { height: 38px; display: block; }
+.nav { list-style: none; margin: 18px 0 0; padding: 0; flex: 1; }
+.nav a {
+  position: relative;
+  display: block;
+  padding: 12px 20px;
+  color: #C7CDD2;
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.nav a:hover { background: rgba(255, 255, 255, 0.05); color: #fff; }
+/* Красная вертикальная плашка активного пункта — как нумерация страниц в дайджесте */
+.nav a.active {
+  background: rgba(190, 30, 45, 0.12);
+  color: #fff;
+}
+.nav a.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--osk-red);
+}
+.sidebar .footer {
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: var(--osk-slate);
+}
+
+/* --- Шапка рабочей области --- */
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--osk-paper);
+  border-bottom: 1px solid var(--osk-line);
+  padding: 0 28px;
+  height: 56px;
+}
+.topbar h2 { font-size: 16px; margin: 0; }
+.topbar .user {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--osk-slate);
+}
+.topbar .user b { color: var(--osk-dark); font-weight: 700; }
+
+.content { padding: 28px; flex: 1; }
+
+/* --- Заглушки разделов в разработке --- */
+.placeholder {
+  border: 1px dashed var(--osk-line);
+  background: var(--osk-paper);
+  padding: 48px;
+  text-align: center;
+  color: var(--osk-slate);
+}
+.placeholder .display { font-size: 17px; color: var(--osk-slate); }
+
+/* --- Таблица пользователей --- */
+table.users {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+}
+table.users th, table.users td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--osk-line);
+  font-size: 14px;
+}
+table.users th {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--osk-slate);
+  background: var(--osk-bg);
+}
+table.users td.actions { text-align: right; white-space: nowrap; }
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  font-size: 12px;
+  border: 1px solid var(--osk-line);
+  color: var(--osk-slate);
+}
+.badge.admin { border-color: var(--osk-red); color: var(--osk-red); }
+.badge.blocked { background: var(--osk-slate); border-color: var(--osk-slate); color: #fff; }
+
+.form-row { display: flex; gap: 16px; }
+.form-row > div { flex: 1; }
+
+.card-narrow { max-width: 720px; }
+.mt-32 { margin-top: 32px; }
+.mt-18 { margin-top: 18px; }
+.ml-8 { margin-left: 8px; }
+
+.toast {
+  position: fixed;
+  right: 24px; bottom: 24px;
+  max-width: 380px;
+  padding: 12px 18px;
+  background: var(--osk-dark);
+  color: #fff;
+  font-size: 14px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+.toast.visible { opacity: 1; }
+.toast.error { background: var(--osk-red-dark); }
+
+/* Адаптив до ширины ноутбука */
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 200px 1fr; }
+  .content { padding: 20px; }
+  .form-row { flex-direction: column; gap: 0; }
+}

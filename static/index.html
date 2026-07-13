@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>srv-ai — рабочее место ИИ</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="/static/img/logo.svg" alt="ОСК Адмиралтейские верфи">
+      </div>
+      <ul class="nav" id="nav">
+        <li><a href="#chat" data-section="chat">Чат</a></li>
+        <li><a href="#notes" data-section="notes">Заметки</a></li>
+        <li><a href="#calendar" data-section="calendar">Календарь</a></li>
+        <li hidden id="nav-admin"><a href="#admin" data-section="admin">Администрирование</a></li>
+      </ul>
+      <div class="footer">srv-ai webUI</div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <h2 id="page-title">Чат</h2>
+        <div class="user">
+          <span><b id="user-name"></b></span>
+          <button class="btn btn-small" id="logout-btn">Выйти</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section id="section-chat" hidden>
+          <div class="placeholder">
+            <div class="display">Чат — в разработке</div>
+            <p>Раздел появится на этапе 2.</p>
+          </div>
+        </section>
+
+        <section id="section-notes" hidden>
+          <div class="placeholder">
+            <div class="display">Заметки — в разработке</div>
+            <p>Раздел появится на этапе 3.</p>
+          </div>
+        </section>
+
+        <section id="section-calendar" hidden>
+          <div class="placeholder">
+            <div class="display">Календарь — в разработке</div>
+            <p>Раздел появится на этапе 3.</p>
+          </div>
+        </section>
+
+        <section id="section-admin" hidden>
+          <h3 class="section-title">Пользователи</h3>
+          <table class="users">
+            <thead>
+              <tr>
+                <th>Логин</th><th>Имя</th><th>Роль</th><th>Статус</th><th>Создан</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+
+          <h3 class="section-title mt-32">Новый пользователь</h3>
+          <div class="card card-narrow">
+            <form id="create-user-form">
+              <div class="form-row">
+                <div>
+                  <label for="new-login">Логин</label>
+                  <input type="text" id="new-login" required>
+                </div>
+                <div>
+                  <label for="new-name">Отображаемое имя</label>
+                  <input type="text" id="new-name">
+                </div>
+              </div>
+              <div class="form-row">
+                <div>
+                  <label for="new-password">Пароль (мин. 10 символов)</label>
+                  <input type="password" id="new-password" required minlength="10" autocomplete="new-password">
+                </div>
+                <div>
+                  <label for="new-role">Роль</label>
+                  <select id="new-role">
+                    <option value="user" selected>Пользователь</option>
+                    <option value="admin">Администратор</option>
+                  </select>
+                </div>
+              </div>
+              <div class="mt-18">
+                <button type="submit" class="btn btn-primary">Создать</button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
