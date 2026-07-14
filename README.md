@@ -55,7 +55,8 @@ uvicorn app.main:app --reload --port 8080
 
 - [Быстрый локальный тест на Windows](docs/local-test-quick.md) — минимум, без фильтра ПДн.
 - [Полный локальный тест на Windows](docs/local-test-full.md) — со всеми функциями.
-- [Развёртывание на сервер](deploy/README-deploy.md) — для сисадмина (systemd, firewall, офлайн).
+- [Развёртывание на сервер (с sudo)](deploy/README-deploy.md) — для сисадмина (systemd, firewall, офлайн).
+- [Развёртывание своими силами (без sudo)](docs/deploy-no-sudo.md) — сам, по SSH, без root.
 
 Обзор всех трёх — в [docs/README.md](docs/README.md).
 
