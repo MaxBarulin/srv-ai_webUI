@@ -548,6 +548,29 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 :root[data-font-scale="1"] { font-size: 16px; }
 :root[data-font-scale="2"] { font-size: 18px; }
 
+/* Плашка фильтра ПДн (§13) */
+.pii-note { color: var(--osk-red-dark); font-style: normal; }
+
+/* Метрики (§13) */
+.metrics-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.metric-tile {
+  min-width: 150px;
+  padding: 16px 20px;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  border-top: 3px solid var(--osk-red);
+}
+.metric-value { font-size: 26px; font-weight: 700; color: var(--osk-dark); }
+.metric-label { margin-top: 4px; font-size: 12px; color: var(--osk-slate); }
+
+/* Журнал аудита (§13) */
+.audit-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.audit-controls select { width: auto; font-size: 13px; padding: 6px 10px; }
+.audit-total { font-size: 12.5px; color: var(--osk-slate); }
+.audit-table { font-size: 12.5px; }
+.audit-table td { vertical-align: top; }
+.audit-pager { display: flex; gap: 8px; margin-top: 12px; }
+
 /* Размышления (reasoning) */
 .reasoning {
   margin-bottom: 6px;

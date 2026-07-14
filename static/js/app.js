@@ -108,6 +108,92 @@ async function loadUsers() {
   }
   loadSpecs();
   loadExamplesAdmin();
+  loadMetrics();
+  loadAudit();
+}
+
+// --- Администрирование: метрики (§13) ---
+
+const METRIC_LABELS = {
+  requests_total: "Всего запросов",
+  requests_success: "Успешных",
+  requests_failed: "Неуспешных",
+  avg_tokens_per_sec: "Токенов/с (средн.)",
+};
+
+async function loadMetrics() {
+  try {
+    const m = await api("/api/admin/metrics");
+    const grid = document.getElementById("metrics-grid");
+    const tiles = Object.entries(METRIC_LABELS).map(([key, label]) => {
+      const tile = document.createElement("div");
+      tile.className = "metric-tile";
+      const value = document.createElement("div");
+      value.className = "metric-value";
+      value.textContent = m[key] ?? 0;
+      const cap = document.createElement("div");
+      cap.className = "metric-label";
+      cap.textContent = label;
+      tile.append(value, cap);
+      return tile;
+    });
+    const pii = m.pii_masked_by_type || {};
+    const piiTotal = Object.values(pii).reduce((a, b) => a + b, 0);
+    if (piiTotal) {
+      const tile = document.createElement("div");
+      tile.className = "metric-tile";
+      const value = document.createElement("div");
+      value.className = "metric-value";
+      value.textContent = piiTotal;
+      const cap = document.createElement("div");
+      cap.className = "metric-label";
+      cap.textContent = "ПДн замаскировано (" +
+        Object.entries(pii).map(([k, v]) => `${k}: ${v}`).join(", ") + ")";
+      tile.append(value, cap);
+      tiles.push(tile);
+    }
+    grid.replaceChildren(...tiles);
+  } catch { /* метрики необязательны */ }
+}
+
+// --- Администрирование: журнал аудита (§13) ---
+
+let auditOffset = 0;
+const AUDIT_LIMIT = 50;
+
+async function loadAudit() {
+  const action = document.getElementById("audit-action").value;
+  const params = new URLSearchParams({ limit: AUDIT_LIMIT, offset: auditOffset });
+  if (action) params.set("action", action);
+  try {
+    const data = await api(`/api/admin/audit?${params}`);
+    const tbody = document.getElementById("audit-tbody");
+    tbody.replaceChildren(...data.items.map(auditRow));
+    document.getElementById("audit-total").textContent = `Всего записей: ${data.total}`;
+    document.getElementById("audit-prev").disabled = auditOffset === 0;
+    document.getElementById("audit-next").disabled = auditOffset + AUDIT_LIMIT >= data.total;
+  } catch (e) {
+    toast(e.detail || "Не удалось загрузить журнал", true);
+  }
+}
+
+function auditRow(item) {
+  const tr = document.createElement("tr");
+  const object = [item.object_type, item.object_id].filter(Boolean).join(" #");
+  const cells = [
+    (item.created_at || "").replace("T", " ").slice(0, 19),
+    item.user_login || "—",
+    item.action,
+    object || "—",
+    item.details || "",
+    item.ip || "",
+  ];
+  for (const text of cells) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+  return tr;
 }
 
 // --- Администрирование: специализации ---
@@ -337,6 +423,14 @@ async function init() {
     saveSpec(null, { name: "Новая специализация", system_prompt: "", is_active: true, sort_order: 0 }));
   document.getElementById("examples-save-btn").addEventListener("click", saveExamples);
   document.getElementById("feedback-export-btn").addEventListener("click", exportFeedback);
+  document.getElementById("audit-refresh").addEventListener("click", () => { auditOffset = 0; loadAudit(); });
+  document.getElementById("audit-action").addEventListener("change", () => { auditOffset = 0; loadAudit(); });
+  document.getElementById("audit-prev").addEventListener("click", () => {
+    auditOffset = Math.max(0, auditOffset - AUDIT_LIMIT); loadAudit();
+  });
+  document.getElementById("audit-next").addEventListener("click", () => {
+    auditOffset += AUDIT_LIMIT; loadAudit();
+  });
   initChat(toast);
   setRagAvailable(Boolean(currentUser.rag_enabled));
   initNotes(toast);

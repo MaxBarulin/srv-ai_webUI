@@ -288,6 +288,36 @@
             <p class="hint">Выгрузка оценок ответов модели (задел под датасет LoRA).</p>
             <button type="button" class="btn" id="feedback-export-btn">Скачать feedback.jsonl</button>
           </div>
+
+          <h3 class="section-title mt-32">Метрики</h3>
+          <div class="metrics-grid" id="metrics-grid"></div>
+
+          <h3 class="section-title mt-32">Журнал аудита</h3>
+          <div class="audit-controls">
+            <select id="audit-action">
+              <option value="">Все действия</option>
+              <option value="login">Вход</option>
+              <option value="login_failed">Неудачный вход</option>
+              <option value="logout">Выход</option>
+              <option value="user_created">Создание пользователя</option>
+              <option value="user_blocked">Блокировка пользователя</option>
+              <option value="llm_tool_call">Вызов инструмента LLM</option>
+              <option value="note_deleted">Удаление заметки</option>
+              <option value="event_deleted">Удаление события</option>
+            </select>
+            <button type="button" class="btn btn-small" id="audit-refresh">Обновить</button>
+            <span class="audit-total" id="audit-total"></span>
+          </div>
+          <table class="users audit-table">
+            <thead>
+              <tr><th>Время</th><th>Пользователь</th><th>Действие</th><th>Объект</th><th>Детали</th><th>IP</th></tr>
+            </thead>
+            <tbody id="audit-tbody"></tbody>
+          </table>
+          <div class="audit-pager">
+            <button type="button" class="btn btn-small" id="audit-prev">‹ Назад</button>
+            <button type="button" class="btn btn-small" id="audit-next">Вперёд ›</button>
+          </div>
         </section>
       </main>
     </div>

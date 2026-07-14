@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, hash_password, require_admin, validate_password
 from app.db import get_db
+from app.metrics import metrics
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -262,3 +263,41 @@ async def export_feedback(
         media_type="application/x-ndjson",
         headers={"Content-Disposition": "attachment; filename=feedback.jsonl"},
     )
+
+
+# ===== Аудит-лог (§10, §13) — только просмотр админом =====
+
+@router.get("/audit")
+async def list_audit(
+    limit: int = 100,
+    offset: int = 0,
+    action: str = "",
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    limit = max(1, min(limit, 500))
+    conditions = []
+    params: list = []
+    if action.strip():
+        conditions.append("a.action = ?")
+        params.append(action.strip())
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    count_cur = await db.execute(f"SELECT COUNT(*) FROM audit_log a {where}", params)
+    total = (await count_cur.fetchone())[0]
+
+    cursor = await db.execute(
+        "SELECT a.id, a.action, a.object_type, a.object_id, a.details, a.created_at, a.ip, "
+        "       u.login AS user_login "
+        "FROM audit_log a LEFT JOIN users u ON u.id = a.user_id "
+        f"{where} ORDER BY a.id DESC LIMIT ? OFFSET ?",
+        [*params, limit, offset])
+    items = [dict(row) for row in await cursor.fetchall()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+# ===== Метрики (§13, п. 3.7) — без содержания запросов =====
+
+@router.get("/metrics")
+async def get_metrics(admin: dict = Depends(require_admin)) -> dict:
+    return metrics.snapshot()

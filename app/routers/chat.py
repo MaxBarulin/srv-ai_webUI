@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +16,8 @@ from app.auth import client_ip, get_current_user
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, stream_chat
+from app.metrics import metrics
+from app.pii import mask_text
 from app.queue import QueueTimeout, llm_queue
 from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
@@ -248,13 +251,29 @@ async def send_message(
 
     chat = await _get_own_chat(db, chat_id, user["id"])
 
+    # Фильтр ПДн (§13): маскирование ДО отправки в LLM и ДО записи в историю.
+    # Изображения не обрабатываются (известное исключение vision-пути).
+    pii_total = 0
+    pii_by_type: dict[str, int] = {}
+
+    def _mask(text: str) -> str:
+        nonlocal pii_total
+        result = mask_text(text)
+        if result.total:
+            pii_total += result.total
+            for k, v in result.counts.items():
+                pii_by_type[k] = pii_by_type.get(k, 0) + v
+        return result.text
+
+    content = _mask(content)
+
     # Извлечённый текст документов присоединяется к сообщению (§16). Оценка длины
     # ~3 символа/токен; при переполнении — усечение с пометкой «документ обрезан».
     doc_texts: list[str] = []
     doc_warnings: list[str] = []
     remaining = MAX_ATTACHMENT_CHARS
     for att in payload.attachments:
-        text = att.text.strip()
+        text = _mask(att.text.strip())
         if not text:
             continue
         if len(text) > remaining:
@@ -264,6 +283,9 @@ async def send_message(
         doc_texts.append(f"[Документ: {att.filename}]\n{text}")
         if remaining <= 0:
             break
+
+    if pii_total:
+        metrics.record_pii(pii_by_type)
 
     image_urls = [url for att in payload.attachments for url in att.images]
     image_names = [att.filename for att in payload.attachments if att.images]
@@ -361,6 +383,8 @@ async def send_message(
         reasoning_parts: list[str] = []
         tool_activity: list[dict] = []
         finished = False
+        had_error = False
+        gen_start = None
         msgs = list(llm_messages)
         ticket = llm_queue.enqueue()
         try:
@@ -370,9 +394,13 @@ async def send_message(
                     yield _sse("queued", {"position": position})
             except QueueTimeout as exc:
                 yield _sse("error", {"detail": str(exc)})
+                metrics.record_request(success=False)
                 return
             yield _sse("queue_ready", {})
+            gen_start = time.monotonic()
 
+            if pii_total:
+                yield _sse("pii_masked", {"count": pii_total})
             for warning in doc_warnings:
                 yield _sse("doc_warning", {"detail": warning})
 
@@ -443,11 +471,18 @@ async def send_message(
                 yield _sse("error", {"detail": "Достигнут лимит вызовов инструментов "
                                                f"({MAX_TOOL_ITERATIONS}) — ответ прерван"})
                 finished = True
+                had_error = True
         except LLMError as exc:
             yield _sse("error", {"detail": str(exc)})
             finished = True
+            had_error = True
         finally:
             ticket.release()
+            # Метрики (§13): факт запроса и средняя скорость, без содержания
+            if gen_start is not None:
+                elapsed = time.monotonic() - gen_start
+                tokens = len("".join(content_parts)) // 3
+                metrics.record_request(success=not had_error, tokens=tokens, seconds=elapsed)
             saved_id = None
             if content_parts or reasoning_parts or tool_activity:
                 # При разрыве стрима (кнопка «Остановить») сохраняем частичный ответ;

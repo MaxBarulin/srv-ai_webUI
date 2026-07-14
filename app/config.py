@@ -58,6 +58,8 @@ class Settings:
     max_upload_mb: int
     vision_enabled: bool
     vision_max_pages: int
+    pii_filter: bool
+    pii_whitelist_file: str
 
     @property
     def db_path(self) -> Path:
@@ -83,6 +85,8 @@ def load_settings() -> Settings:
         max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),
         vision_enabled=_get_bool("VISION_ENABLED", True),
         vision_max_pages=_get_int("VISION_MAX_PAGES", 10),
+        pii_filter=_get_bool("PII_FILTER", False),
+        pii_whitelist_file=_get("PII_WHITELIST_FILE", ""),
     )
 
 

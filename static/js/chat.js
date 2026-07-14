@@ -522,6 +522,11 @@ async function sendMessage() {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
         } else if (event === "sources") {
           live.insertBefore(sourcesBlock(data.text), liveBody);
+        } else if (event === "pii_masked") {
+          const note = document.createElement("div");
+          note.className = "msg-note pii-note";
+          note.textContent = `🛡 Заменено элементов ПДн: ${data.count}`;
+          live.insertBefore(note, liveBody);
         } else if (event === "rag_error" || event === "doc_warning") {
           const note = document.createElement("div");
           note.className = "msg-note msg-error";
