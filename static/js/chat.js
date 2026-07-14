@@ -5,6 +5,7 @@ import { escapeHtml, renderMarkdown } from "/static/js/markdown.js";
 let chats = [];
 let activeChatId = null;
 let abortController = null; // не null — идёт генерация
+let pendingAttachments = []; // разобранные вложения для следующего сообщения
 
 const els = {};
 
@@ -25,7 +26,13 @@ export function initChat(toast) {
   els.ctxRagLabel = $("ctx-rag-label");
   els.spec = $("chat-spec");
   els.examples = $("chat-examples");
+  els.attachBtn = $("chat-attach-btn");
+  els.fileInput = $("chat-file");
+  els.attachments = $("chat-attachments");
   els.toast = toast;
+
+  els.attachBtn.addEventListener("click", () => els.fileInput.click());
+  els.fileInput.addEventListener("change", onFileSelected);
 
   loadSpecializations();
   loadExamples();
@@ -138,6 +145,53 @@ async function useExample(text) {
   await createChat();
   els.input.value = text;
   els.input.focus();
+}
+
+// --- Вложения (§16) ---
+
+async function onFileSelected() {
+  const file = els.fileInput.files[0];
+  els.fileInput.value = ""; // разрешить повторный выбор того же файла
+  if (!file) return;
+  els.attachBtn.disabled = true;
+  els.attachBtn.textContent = "Загрузка…";
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch("/api/attachments", { method: "POST", body: form });
+    if (r.status === 401) { location.href = "/login"; return; }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || `Ошибка ${r.status}`);
+    pendingAttachments.push(data);
+    (data.warnings || []).forEach((w) => els.toast(w));
+    renderAttachments();
+  } catch (e) {
+    els.toast(e.message || "Не удалось обработать файл", true);
+  } finally {
+    els.attachBtn.disabled = false;
+    els.attachBtn.textContent = "📎 Файл";
+  }
+}
+
+function renderAttachments() {
+  els.attachments.hidden = pendingAttachments.length === 0;
+  els.attachments.replaceChildren(...pendingAttachments.map((att, idx) => {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    const isImage = att.images && att.images.length;
+    chip.textContent = `${isImage ? "🖼" : "📄"} ${att.filename}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attach-remove";
+    remove.textContent = "✕";
+    remove.title = "Убрать вложение";
+    remove.addEventListener("click", () => {
+      pendingAttachments.splice(idx, 1);
+      renderAttachments();
+    });
+    chip.appendChild(remove);
+    return chip;
+  }));
 }
 
 async function submitFeedback(messageId, rating, msgEl) {
@@ -380,10 +434,18 @@ function parseSseBuffer(buffer, onEvent) {
 
 async function sendMessage() {
   const content = els.input.value.trim();
-  if (!content || activeChatId === null || abortController !== null) return;
+  if ((!content && pendingAttachments.length === 0) || activeChatId === null
+      || abortController !== null) return;
+
+  const attachments = pendingAttachments;
+  pendingAttachments = [];
+  renderAttachments();
 
   els.input.value = "";
-  els.messages.appendChild(messageNode({ role: "user", content }));
+  const attachNames = attachments.map((a) =>
+    `${a.images && a.images.length ? "🖼" : "📄"} ${a.filename}`).join("  ");
+  const userText = [content, attachNames && `\n${attachNames}`].filter(Boolean).join("");
+  els.messages.appendChild(messageNode({ role: "user", content: userText || attachNames }));
   scrollToBottom();
 
   // Живой контейнер ответа
@@ -426,6 +488,9 @@ async function sendMessage() {
         content,
         use_tools: els.ctxTools.checked,
         use_rag: !els.ctxRagLabel.hidden && els.ctxRag.checked,
+        attachments: attachments.map((a) => ({
+          filename: a.filename, text: a.text || "", images: a.images || [],
+        })),
       }),
       signal: abortController.signal,
     });
@@ -457,7 +522,7 @@ async function sendMessage() {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
         } else if (event === "sources") {
           live.insertBefore(sourcesBlock(data.text), liveBody);
-        } else if (event === "rag_error") {
+        } else if (event === "rag_error" || event === "doc_warning") {
           const note = document.createElement("div");
           note.className = "msg-note msg-error";
           note.textContent = data.detail;

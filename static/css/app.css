@@ -631,13 +631,14 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 /* Поле ввода */
 .chat-input-row {
   display: flex;
-  gap: 12px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
   padding: 14px 28px 6px;
   border-top: 1px solid var(--osk-line);
   background: var(--osk-paper);
 }
 .chat-input-row[hidden] { display: none; }
+.chat-input-main { display: flex; gap: 12px; align-items: flex-end; }
 .chat-input-row textarea {
   flex: 1;
   resize: none;
@@ -649,6 +650,32 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .chat-input-row textarea:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; }
 .chat-input-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* Вложения (§16) */
+.chat-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-attachments[hidden] { display: none; }
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--osk-bg);
+  border: 1px solid var(--osk-line);
+  border-left: 3px solid var(--osk-red);
+  font-size: 12.5px;
+  color: var(--osk-dark);
+  max-width: 260px;
+}
+.attach-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--osk-slate);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.attach-remove:hover { color: var(--osk-red); }
 .chat-disclaimer {
   padding: 4px 28px 10px;
   background: var(--osk-paper);

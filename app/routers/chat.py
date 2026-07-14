@@ -32,6 +32,8 @@ router = APIRouter(prefix="/api/chats", tags=["chat"])
 
 DEFAULT_TITLE = "Новый чат"
 AUTO_TITLE_MAX_LEN = 60
+# Бюджет символов на извлечённый текст всех вложений (~3 симв/токен, §16)
+MAX_ATTACHMENT_CHARS = 60000
 
 
 class CreateChatRequest(BaseModel):
@@ -43,10 +45,17 @@ class RenameChatRequest(BaseModel):
     title: str
 
 
+class Attachment(BaseModel):
+    filename: str = "file"
+    text: str = ""
+    images: list[str] = []  # data-URL, только на время генерации (§16)
+
+
 class SendMessageRequest(BaseModel):
     content: str
     use_tools: bool = True  # переключатель «Заметки/Календарь» в шапке чата (§4)
     use_rag: bool = False   # переключатель «База знаний» (§8)
+    attachments: list[Attachment] = []
 
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
@@ -232,10 +241,41 @@ async def send_message(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> StreamingResponse:
     content = payload.content.strip()
-    if not content:
+    has_images = any(a.images for a in payload.attachments)
+    has_doc_text = any(a.text.strip() for a in payload.attachments)
+    if not content and not has_images and not has_doc_text:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
 
     chat = await _get_own_chat(db, chat_id, user["id"])
+
+    # Извлечённый текст документов присоединяется к сообщению (§16). Оценка длины
+    # ~3 символа/токен; при переполнении — усечение с пометкой «документ обрезан».
+    doc_texts: list[str] = []
+    doc_warnings: list[str] = []
+    remaining = MAX_ATTACHMENT_CHARS
+    for att in payload.attachments:
+        text = att.text.strip()
+        if not text:
+            continue
+        if len(text) > remaining:
+            text = text[:remaining]
+            doc_warnings.append(f"документ «{att.filename}» обрезан по лимиту контекста")
+        remaining -= len(text)
+        doc_texts.append(f"[Документ: {att.filename}]\n{text}")
+        if remaining <= 0:
+            break
+
+    image_urls = [url for att in payload.attachments for url in att.images]
+    image_names = [att.filename for att in payload.attachments if att.images]
+
+    # Текст сообщения для модели и для истории (изображения в БД не хранятся, §16)
+    text_for_model = content
+    if doc_texts:
+        text_for_model = (content + "\n\n" + "\n\n".join(doc_texts)).strip()
+    stored_content = text_for_model
+    if image_names:
+        marker = " ".join(f"[приложено изображение: {n}]" for n in image_names)
+        stored_content = (text_for_model + "\n" + marker).strip()
 
     # История для LLM: system + прежние сообщения без reasoning (§4 ТЗ).
     # Пустые ответы (генерация остановлена на этапе размышлений) не включаем.
@@ -253,21 +293,30 @@ async def send_message(
         if spec_row is not None:
             spec_prompt = spec_row["system_prompt"]
 
+    # Изображения передаются модели через OpenAI-формат image_url (§16)
+    if image_urls:
+        user_content: object = [{"type": "text", "text": text_for_model or "Проанализируй вложение."}]
+        user_content += [{"type": "image_url", "image_url": {"url": url}} for url in image_urls]
+    else:
+        user_content = text_for_model
+
     llm_messages = [
         {"role": "system", "content": build_system_prompt(user["display_name"], spec_prompt)},
         *history,
-        {"role": "user", "content": content},
+        {"role": "user", "content": user_content},
     ]
 
     await db.execute(
         "INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
-        (chat_id, content, utcnow_iso()),
+        (chat_id, stored_content, utcnow_iso()),
     )
     await db.commit()
 
     auto_title = None
     if chat["title"] == DEFAULT_TITLE:
-        auto_title = " ".join(content.split())[:AUTO_TITLE_MAX_LEN]
+        base = content or (image_names[0] if image_names else
+                           (payload.attachments[0].filename if payload.attachments else ""))
+        auto_title = " ".join(base.split())[:AUTO_TITLE_MAX_LEN] or DEFAULT_TITLE
 
     user_ip = client_ip(request)
     tools = TOOLS_SPEC if payload.use_tools else None
@@ -323,6 +372,9 @@ async def send_message(
                 yield _sse("error", {"detail": str(exc)})
                 return
             yield _sse("queue_ready", {})
+
+            for warning in doc_warnings:
+                yield _sse("doc_warning", {"detail": warning})
 
             if payload.use_rag and settings.rag_enabled:
                 # Контекст из базы знаний — перед сообщением пользователя (§8).

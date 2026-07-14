@@ -58,12 +58,19 @@
                 <div class="chat-examples" id="chat-examples"></div>
               </div>
               <form class="chat-input-row" id="chat-form" hidden>
-                <textarea id="chat-input" rows="3"
-                  placeholder="Введите запрос… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
-                <div class="chat-input-actions">
-                  <button type="submit" class="btn btn-primary" id="chat-send-btn">Отправить</button>
-                  <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
+                <div class="chat-attachments" id="chat-attachments" hidden></div>
+                <div class="chat-input-main">
+                  <textarea id="chat-input" rows="3"
+                    placeholder="Введите запрос… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+                  <div class="chat-input-actions">
+                    <button type="submit" class="btn btn-primary" id="chat-send-btn">Отправить</button>
+                    <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
+                    <button type="button" class="btn" id="chat-attach-btn"
+                      title="Прикрепить файл (txt, md, csv, docx, xlsx, pdf, png, jpg)">📎 Файл</button>
+                  </div>
                 </div>
+                <input type="file" id="chat-file" hidden
+                  accept=".txt,.md,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg">
               </form>
               <div class="chat-disclaimer">Ответ ИИ носит рекомендательный характер и требует проверки специалистом</div>
             </div>

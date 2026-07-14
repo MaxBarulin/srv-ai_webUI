@@ -55,6 +55,9 @@ class Settings:
     session_ttl_hours: int
     tools_confirm_destructive: bool
     system_prompt_file: str
+    max_upload_mb: int
+    vision_enabled: bool
+    vision_max_pages: int
 
     @property
     def db_path(self) -> Path:
@@ -77,6 +80,9 @@ def load_settings() -> Settings:
         session_ttl_hours=_get_int("SESSION_TTL_HOURS", 12),
         tools_confirm_destructive=_get_bool("TOOLS_CONFIRM_DESTRUCTIVE", True),
         system_prompt_file=_get("SYSTEM_PROMPT_FILE", "./system_prompt.txt"),
+        max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),
+        vision_enabled=_get_bool("VISION_ENABLED", True),
+        vision_max_pages=_get_int("VISION_MAX_PAGES", 10),
     )
 
 
