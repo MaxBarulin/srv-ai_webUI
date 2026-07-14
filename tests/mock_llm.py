@@ -45,10 +45,10 @@ async def chat_completions(request: Request):
 
         for text in REASONING_CHUNKS:
             yield chunk({"reasoning_content": text})
-            await asyncio.sleep(0.5 if slow else 0.01)
+            await asyncio.sleep(2.0 if slow else 0.01)
         for text in _content_chunks(last_user):
             yield chunk({"content": text})
-            await asyncio.sleep(0.5 if slow else 0.01)
+            await asyncio.sleep(2.0 if slow else 0.01)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")

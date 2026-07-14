@@ -160,9 +160,10 @@ async def send_message(
 
     chat = await _get_own_chat(db, chat_id, user["id"])
 
-    # История для LLM: system + прежние сообщения без reasoning (§4 ТЗ)
+    # История для LLM: system + прежние сообщения без reasoning (§4 ТЗ).
+    # Пустые ответы (генерация остановлена на этапе размышлений) не включаем.
     cursor = await db.execute(
-        "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id",
+        "SELECT role, content FROM messages WHERE chat_id = ? AND content != '' ORDER BY id",
         (chat_id,),
     )
     history = [{"role": row["role"], "content": row["content"]} for row in await cursor.fetchall()]

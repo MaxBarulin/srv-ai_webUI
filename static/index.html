@@ -32,9 +32,27 @@
 
       <main class="content">
         <section id="section-chat" hidden>
-          <div class="placeholder">
-            <div class="display">Чат — в разработке</div>
-            <p>Раздел появится на этапе 2.</p>
+          <div class="chat-layout">
+            <aside class="chat-sidebar">
+              <button type="button" class="btn btn-primary chat-new" id="chat-new-btn">Новый чат</button>
+              <ul class="chat-list" id="chat-list"></ul>
+            </aside>
+            <div class="chat-main">
+              <div class="chat-messages" id="chat-messages"></div>
+              <div class="chat-empty" id="chat-empty">
+                <div class="display">Нет чатов</div>
+                <p>Создайте новый чат, чтобы начать работу с моделью.</p>
+              </div>
+              <form class="chat-input-row" id="chat-form" hidden>
+                <textarea id="chat-input" rows="3"
+                  placeholder="Введите запрос… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+                <div class="chat-input-actions">
+                  <button type="submit" class="btn btn-primary" id="chat-send-btn">Отправить</button>
+                  <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
+                </div>
+              </form>
+              <div class="chat-disclaimer">Ответ ИИ носит рекомендательный характер и требует проверки специалистом</div>
+            </div>
           </div>
         </section>
 
