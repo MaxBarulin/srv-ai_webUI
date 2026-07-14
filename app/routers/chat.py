@@ -15,6 +15,7 @@ from app.auth import client_ip, get_current_user
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, stream_chat
+from app.queue import QueueTimeout, llm_queue
 from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
     MAX_TOOL_ITERATIONS,
@@ -35,6 +36,7 @@ AUTO_TITLE_MAX_LEN = 60
 
 class CreateChatRequest(BaseModel):
     title: str = ""
+    specialization_id: int | None = None
 
 
 class RenameChatRequest(BaseModel):
@@ -49,7 +51,8 @@ class SendMessageRequest(BaseModel):
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
     cursor = await db.execute(
-        "SELECT id, title, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
+        "SELECT id, title, specialization_id, created_at, updated_at "
+        "FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
     row = await cursor.fetchone()
@@ -64,7 +67,7 @@ async def list_chats(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
     cursor = await db.execute(
-        "SELECT id, title, created_at, updated_at FROM chats "
+        "SELECT id, title, specialization_id, created_at, updated_at FROM chats "
         "WHERE user_id = ? ORDER BY updated_at DESC",
         (user["id"],),
     )
@@ -79,12 +82,20 @@ async def create_chat(
 ) -> dict:
     now = utcnow_iso()
     title = payload.title.strip() or DEFAULT_TITLE
+    spec_id = payload.specialization_id
+    if spec_id is not None:
+        cursor = await db.execute(
+            "SELECT id FROM specializations WHERE id = ? AND is_active = 1", (spec_id,))
+        if await cursor.fetchone() is None:
+            spec_id = None  # неизвестная/выключенная специализация — просто общий режим
     cursor = await db.execute(
-        "INSERT INTO chats (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (user["id"], title, now, now),
+        "INSERT INTO chats (user_id, title, specialization_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (user["id"], title, spec_id, now, now),
     )
     await db.commit()
-    return {"id": cursor.lastrowid, "title": title, "created_at": now, "updated_at": now}
+    return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
+            "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")
@@ -127,9 +138,12 @@ async def list_messages(
 ) -> list[dict]:
     await _get_own_chat(db, chat_id, user["id"])
     cursor = await db.execute(
-        "SELECT id, role, content, reasoning, tool_calls_json, created_at FROM messages "
-        "WHERE chat_id = ? ORDER BY id",
-        (chat_id,),
+        "SELECT m.id, m.role, m.content, m.reasoning, m.tool_calls_json, m.created_at, "
+        "       f.rating AS feedback_rating "
+        "FROM messages m "
+        "LEFT JOIN feedback f ON f.message_id = m.id AND f.user_id = ? "
+        "WHERE m.chat_id = ? ORDER BY m.id",
+        (user["id"], chat_id),
     )
     result = []
     for row in await cursor.fetchall():
@@ -138,6 +152,47 @@ async def list_messages(
         msg["tool_activity"] = json.loads(raw) if raw else []
         result.append(msg)
     return result
+
+
+class FeedbackRequest(BaseModel):
+    rating: int  # 1 (👍) или -1 (👎)
+    comment: str = ""
+
+
+@router.post("/{chat_id}/messages/{message_id}/feedback")
+async def submit_feedback(
+    chat_id: int,
+    message_id: int,
+    payload: FeedbackRequest,
+    user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    if payload.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="Оценка должна быть 1 или -1")
+    await _get_own_chat(db, chat_id, user["id"])
+    cursor = await db.execute(
+        "SELECT m.id FROM messages m WHERE m.id = ? AND m.chat_id = ? AND m.role = 'assistant'",
+        (message_id, chat_id))
+    if await cursor.fetchone() is None:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+
+    # Специализация чата (для будущего датасета) — по имени
+    cursor = await db.execute(
+        "SELECT s.name FROM chats c LEFT JOIN specializations s ON s.id = c.specialization_id "
+        "WHERE c.id = ?", (chat_id,))
+    spec_row = await cursor.fetchone()
+    specialization = spec_row["name"] if spec_row and spec_row["name"] else None
+
+    await db.execute(
+        "INSERT INTO feedback (message_id, chat_id, user_id, rating, comment, specialization, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(message_id, user_id) DO UPDATE SET "
+        "rating = excluded.rating, comment = excluded.comment, created_at = excluded.created_at",
+        (message_id, chat_id, user["id"], payload.rating,
+         payload.comment.strip() or None, specialization, utcnow_iso()),
+    )
+    await db.commit()
+    return {"ok": True, "rating": payload.rating}
 
 
 async def _save_assistant_message(
@@ -190,8 +245,16 @@ async def send_message(
     )
     history = [{"role": row["role"], "content": row["content"]} for row in await cursor.fetchall()]
 
+    spec_prompt = ""
+    if chat["specialization_id"] is not None:
+        cursor = await db.execute(
+            "SELECT system_prompt FROM specializations WHERE id = ?", (chat["specialization_id"],))
+        spec_row = await cursor.fetchone()
+        if spec_row is not None:
+            spec_prompt = spec_row["system_prompt"]
+
     llm_messages = [
-        {"role": "system", "content": build_system_prompt(user["display_name"])},
+        {"role": "system", "content": build_system_prompt(user["display_name"], spec_prompt)},
         *history,
         {"role": "user", "content": content},
     ]
@@ -250,7 +313,17 @@ async def send_message(
         tool_activity: list[dict] = []
         finished = False
         msgs = list(llm_messages)
+        ticket = llm_queue.enqueue()
         try:
+            # Ждём своей очереди к модели, отдавая честную позицию (§15)
+            try:
+                async for position in ticket.wait_turn():
+                    yield _sse("queued", {"position": position})
+            except QueueTimeout as exc:
+                yield _sse("error", {"detail": str(exc)})
+                return
+            yield _sse("queue_ready", {})
+
             if payload.use_rag and settings.rag_enabled:
                 # Контекст из базы знаний — перед сообщением пользователя (§8).
                 # Недоступность LightRAG не прерывает обычный режим.
@@ -322,6 +395,7 @@ async def send_message(
             yield _sse("error", {"detail": str(exc)})
             finished = True
         finally:
+            ticket.release()
             saved_id = None
             if content_parts or reasoning_parts or tool_activity:
                 # При разрыве стрима (кнопка «Остановить») сохраняем частичный ответ;

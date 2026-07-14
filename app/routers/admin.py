@@ -1,8 +1,11 @@
-"""Admin endpoints: user management (list/create/block/unblock/reset password)."""
+"""Admin endpoints: user management, specializations, chat examples, feedback export."""
 from __future__ import annotations
+
+import json
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.audit import utcnow_iso, write_audit
@@ -126,3 +129,136 @@ async def reset_user_password(
                       object_type="user", object_id=str(user_id),
                       details=f"login={row['login']}", ip=client_ip(request))
     return {"ok": True}
+
+
+# ===== Специализации (§15) =====
+
+class SpecializationBody(BaseModel):
+    name: str
+    system_prompt: str = ""
+    is_active: bool = True
+    sort_order: int = 0
+
+
+@router.get("/specializations")
+async def admin_list_specializations(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[dict]:
+    cursor = await db.execute(
+        "SELECT id, name, system_prompt, is_active, sort_order, created_at "
+        "FROM specializations ORDER BY sort_order, id")
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+@router.post("/specializations", status_code=201)
+async def admin_create_specialization(
+    payload: SpecializationBody,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Название не может быть пустым")
+    cursor = await db.execute(
+        "INSERT INTO specializations (name, system_prompt, is_active, sort_order, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (name, payload.system_prompt, int(payload.is_active), payload.sort_order, utcnow_iso()))
+    await db.commit()
+    return {"id": cursor.lastrowid}
+
+
+@router.put("/specializations/{spec_id}")
+async def admin_update_specialization(
+    spec_id: int,
+    payload: SpecializationBody,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Название не может быть пустым")
+    cursor = await db.execute(
+        "UPDATE specializations SET name = ?, system_prompt = ?, is_active = ?, sort_order = ? "
+        "WHERE id = ?",
+        (name, payload.system_prompt, int(payload.is_active), payload.sort_order, spec_id))
+    await db.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Специализация не найдена")
+    return {"ok": True}
+
+
+@router.delete("/specializations/{spec_id}")
+async def admin_delete_specialization(
+    spec_id: int,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    # Чаты, ссылавшиеся на специализацию, останутся с NULL (общий режим)
+    await db.execute("UPDATE chats SET specialization_id = NULL WHERE specialization_id = ?",
+                     (spec_id,))
+    cursor = await db.execute("DELETE FROM specializations WHERE id = ?", (spec_id,))
+    await db.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Специализация не найдена")
+    return {"ok": True}
+
+
+# ===== Примеры запросов в пустом чате (§15) =====
+
+class ExamplesBody(BaseModel):
+    items: list[str]
+
+
+@router.get("/examples")
+async def admin_list_examples(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[dict]:
+    cursor = await db.execute("SELECT id, text FROM chat_examples ORDER BY sort_order, id")
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+@router.put("/examples")
+async def admin_set_examples(
+    payload: ExamplesBody,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    items = [t.strip() for t in payload.items if t.strip()]
+    await db.execute("DELETE FROM chat_examples")
+    for order, text in enumerate(items):
+        await db.execute("INSERT INTO chat_examples (text, sort_order) VALUES (?, ?)", (text, order))
+    await db.commit()
+    return {"ok": True, "count": len(items)}
+
+
+# ===== Выгрузка обратной связи в JSONL (§15) =====
+
+@router.get("/feedback/export")
+async def export_feedback(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> StreamingResponse:
+    cursor = await db.execute(
+        "SELECT f.id, f.message_id, f.chat_id, f.rating, f.comment, f.specialization, "
+        "       f.created_at, u.login AS user_login, "
+        "       q.content AS prompt, m.content AS answer "
+        "FROM feedback f "
+        "JOIN messages m ON m.id = f.message_id "
+        "JOIN users u ON u.id = f.user_id "
+        "LEFT JOIN messages q ON q.id = ("
+        "    SELECT MAX(id) FROM messages WHERE chat_id = f.chat_id "
+        "    AND id < f.message_id AND role = 'user') "
+        "ORDER BY f.id")
+    rows = await cursor.fetchall()
+
+    def generate():
+        for row in rows:
+            yield json.dumps(dict(row), ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=feedback.jsonl"},
+    )

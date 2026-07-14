@@ -30,7 +30,7 @@ class LLMError(Exception):
     """LLM backend is unreachable or returned an error."""
 
 
-def build_system_prompt(user_display_name: str) -> str:
+def build_system_prompt(user_display_name: str, specialization_prompt: str = "") -> str:
     path = Path(settings.system_prompt_file)
     if not path.is_absolute():
         path = BASE_DIR / path
@@ -40,7 +40,10 @@ def build_system_prompt(user_display_name: str) -> str:
         template = "Ты — ИИ-ассистент. Текущая дата и время: {datetime}. Пользователь: {user_name}."
     now = datetime.now(APP_TZ)
     dt = f"{now.strftime('%d.%m.%Y %H:%M')} ({_WEEKDAYS_RU[now.weekday()]})"
-    return template.replace("{datetime}", dt).replace("{user_name}", user_display_name)
+    prompt = template.replace("{datetime}", dt).replace("{user_name}", user_display_name)
+    if specialization_prompt.strip():
+        prompt = f"{prompt}\n\n{specialization_prompt.strip()}"
+    return prompt
 
 
 def make_client() -> httpx.AsyncClient:
