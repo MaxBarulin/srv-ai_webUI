@@ -2,6 +2,7 @@
 import { api } from "/static/js/api.js";
 import { initChat } from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
+import { initCalendar } from "/static/js/calendar.js";
 
 const SECTIONS = {
   chat: "Чат",
@@ -168,6 +169,7 @@ async function init() {
   document.getElementById("create-user-form").addEventListener("submit", createUser);
   initChat(toast);
   initNotes(toast);
+  initCalendar(toast);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));
   showSection(currentSectionFromHash());
 }
