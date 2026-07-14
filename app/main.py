@@ -11,6 +11,7 @@ from app.config import BASE_DIR
 from app.db import init_db
 from app.routers import admin as admin_router
 from app.routers import auth as auth_router
+from app.routers import calendar as calendar_router
 from app.routers import chat as chat_router
 from app.routers import notes as notes_router
 
@@ -50,6 +51,7 @@ app.include_router(auth_router.router)
 app.include_router(admin_router.router)
 app.include_router(chat_router.router)
 app.include_router(notes_router.router)
+app.include_router(calendar_router.router)
 
 STATIC_DIR = BASE_DIR / "static"
 
