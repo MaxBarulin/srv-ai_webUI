@@ -78,9 +78,7 @@ export function renderMarkdown(source) {
         rows.push(tableRow(lines[i], "td"));
         i++;
       }
-      html.push(
-        `<div class="table-wrap"><button type="button" class="table-excel">` +
-        `Копировать для Excel</button><table>${rows.join("")}</table></div>`);
+      html.push(`<div class="table-wrap"><table>${rows.join("")}</table></div>`);
       continue;
     }
 

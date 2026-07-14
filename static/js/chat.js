@@ -73,20 +73,6 @@ export function initChat(toast) {
     });
   });
 
-  // Кнопки «Копировать для Excel» у markdown-таблиц (§15)
-  els.messages.addEventListener("click", (e) => {
-    const btn = e.target.closest(".table-excel");
-    if (!btn) return;
-    const table = btn.parentElement.querySelector("table");
-    if (!table) return;
-    const tsv = [...table.rows].map((row) =>
-      [...row.cells].map((c) => c.textContent.replace(/\t/g, " ")).join("\t")).join("\n");
-    navigator.clipboard.writeText(tsv).then(() => {
-      btn.textContent = "Скопировано";
-      setTimeout(() => { btn.textContent = "Копировать для Excel"; }, 1500);
-    });
-  });
-
   // Кнопки обратной связи 👍/👎 (§15)
   els.messages.addEventListener("click", (e) => {
     const btn = e.target.closest(".fb-btn");
@@ -415,7 +401,9 @@ function toolChip({ label, status, token }) {
   return chip;
 }
 
-function feedbackBar(rating) {
+// Панель под ответом: 👍/👎, «Копировать» (исходный markdown) и
+// переключатель «рендер ↔ Markdown» для тела ответа.
+function answerActions(rating, getRaw, bodyEl) {
   const bar = document.createElement("div");
   bar.className = "feedback-bar";
   for (const [value, label, title] of [[1, "👍", "Хороший ответ"], [-1, "👎", "Плохой ответ"]]) {
@@ -428,7 +416,56 @@ function feedbackBar(rating) {
     btn.title = title;
     bar.appendChild(btn);
   }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "msg-action";
+  copyBtn.textContent = "Копировать";
+  copyBtn.title = "Скопировать весь ответ (markdown)";
+  copyBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(getRaw()).then(() => {
+      copyBtn.textContent = "Скопировано";
+      setTimeout(() => { copyBtn.textContent = "Копировать"; }, 1500);
+    });
+  });
+  bar.appendChild(copyBtn);
+
+  const rawBtn = document.createElement("button");
+  rawBtn.type = "button";
+  rawBtn.className = "msg-action";
+  rawBtn.textContent = "Markdown";
+  rawBtn.title = "Показать ответ как исходный markdown";
+  rawBtn.addEventListener("click", () => {
+    const showRaw = bodyEl.classList.toggle("raw-view");
+    rawBtn.classList.toggle("active", showRaw);
+    rawBtn.textContent = showRaw ? "Рендер" : "Markdown";
+    if (showRaw) bodyEl.textContent = getRaw();
+    else bodyEl.innerHTML = renderMarkdown(getRaw());
+  });
+  bar.appendChild(rawBtn);
+
   return bar;
+}
+
+// Сворачиваемый блок вложения в сообщении пользователя (§16):
+// спарсенный документ не «висит стеной», а открывается по клику.
+function attachmentBlock(att) {
+  if (att.image) {
+    const chip = document.createElement("div");
+    chip.className = "attach-msg-chip";
+    chip.textContent = `🖼 ${att.filename}`;
+    return chip;
+  }
+  const details = document.createElement("details");
+  details.className = "attach-doc";
+  const summary = document.createElement("summary");
+  summary.textContent = `📄 ${att.filename}`;
+  details.appendChild(summary);
+  const body = document.createElement("div");
+  body.className = "attach-doc-body";
+  body.textContent = att.text || "";
+  details.appendChild(body);
+  return details;
 }
 
 function messageNode(msg) {
@@ -445,12 +482,15 @@ function messageNode(msg) {
     body.className = "msg-body";
     body.innerHTML = renderMarkdown(msg.content);
     div.appendChild(body);
-    if (msg.id) div.appendChild(feedbackBar(msg.feedback_rating));
+    if (msg.id) div.appendChild(answerActions(msg.feedback_rating, () => msg.content, body));
   } else {
-    const body = document.createElement("div");
-    body.className = "msg-body";
-    body.textContent = msg.content;
-    div.appendChild(body);
+    if (msg.content) {
+      const body = document.createElement("div");
+      body.className = "msg-body";
+      body.textContent = msg.content;
+      div.appendChild(body);
+    }
+    for (const att of msg.attachments || []) div.appendChild(attachmentBlock(att));
   }
   return div;
 }
@@ -501,10 +541,13 @@ async function sendMessage() {
   renderAttachments();
 
   els.input.value = "";
-  const attachNames = attachments.map((a) =>
-    `${a.images && a.images.length ? "🖼" : "📄"} ${a.filename}`).join("  ");
-  const userText = [content, attachNames && `\n${attachNames}`].filter(Boolean).join("");
-  els.messages.appendChild(messageNode({ role: "user", content: userText || attachNames }));
+  els.messages.appendChild(messageNode({
+    role: "user",
+    content,
+    attachments: attachments.map((a) => (a.images && a.images.length
+      ? { filename: a.filename, image: true }
+      : { filename: a.filename, text: a.text || "" })),
+  }));
   scrollToBottom();
 
   // Живой контейнер ответа
@@ -604,10 +647,10 @@ async function sendMessage() {
       const chat = chats.find((c) => c.id === chatId);
       if (chat) { chat.title = renamed; renderChatList(); }
     }
-    // Панель оценки ответа (§15) — только если ответ сохранён
+    // Панель действий под ответом (§15) — только если ответ сохранён
     if (messageId && (contentText || live.querySelector(".tool-chip"))) {
       live.dataset.messageId = String(messageId);
-      live.appendChild(feedbackBar(null));
+      live.appendChild(answerActions(null, () => contentText, liveBody));
     }
   } catch (e) {
     if (e.name === "AbortError") {

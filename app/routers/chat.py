@@ -187,7 +187,15 @@ async def list_messages(
     for row in await cursor.fetchall():
         msg = dict(row)
         raw = msg.pop("tool_calls_json", None)
-        msg["tool_activity"] = json.loads(raw) if raw else []
+        parsed = json.loads(raw) if raw else None
+        # У ассистента в колонке — список плашек инструментов,
+        # у пользователя — {"attachments": [...]} с текстами документов
+        if isinstance(parsed, dict):
+            msg["tool_activity"] = []
+            msg["attachments"] = parsed.get("attachments", [])
+        else:
+            msg["tool_activity"] = parsed or []
+            msg["attachments"] = []
         result.append(msg)
     return result
 
@@ -293,22 +301,28 @@ async def send_message(
 
     content = _mask(content)
 
-    # Извлечённый текст документов присоединяется к сообщению (§16). Оценка длины
-    # ~3 символа/токен; при переполнении — усечение с пометкой «документ обрезан».
+    # Извлечённый текст документов уходит модели вместе с сообщением (§16), но в БД
+    # хранится отдельно от текста пользователя (attachments в tool_calls_json) —
+    # чтобы UI показывал документ сворачиваемым блоком, а не «стеной» в сообщении.
+    # Оценка длины ~3 символа/токен; при переполнении — усечение с пометкой.
     doc_texts: list[str] = []
     doc_warnings: list[str] = []
+    attachments_meta: list[dict] = []
     remaining = MAX_ATTACHMENT_CHARS
     for att in payload.attachments:
+        if att.images:
+            # Изображения в БД не хранятся (§16) — только пометка об имени файла
+            attachments_meta.append({"filename": att.filename, "image": True})
+            continue
         text = _mask(att.text.strip())
         if not text:
             continue
         if len(text) > remaining:
             text = text[:remaining]
             doc_warnings.append(f"документ «{att.filename}» обрезан по лимиту контекста")
-        remaining -= len(text)
+        remaining = max(0, remaining - len(text))
         doc_texts.append(f"[Документ: {att.filename}]\n{text}")
-        if remaining <= 0:
-            break
+        attachments_meta.append({"filename": att.filename, "text": text})
 
     if pii_total:
         metrics.record_pii(pii_by_type)
@@ -316,22 +330,34 @@ async def send_message(
     image_urls = [url for att in payload.attachments for url in att.images]
     image_names = [att.filename for att in payload.attachments if att.images]
 
-    # Текст сообщения для модели и для истории (изображения в БД не хранятся, §16)
+    # Полный текст для модели: сообщение пользователя + документы
     text_for_model = content
     if doc_texts:
         text_for_model = (content + "\n\n" + "\n\n".join(doc_texts)).strip()
-    stored_content = text_for_model
-    if image_names:
-        marker = " ".join(f"[приложено изображение: {n}]" for n in image_names)
-        stored_content = (text_for_model + "\n" + marker).strip()
 
     # История для LLM: system + прежние сообщения без reasoning (§4 ТЗ).
-    # Пустые ответы (генерация остановлена на этапе размышлений) не включаем.
+    # Текст документов из вложений восстанавливается в сообщение (контекст
+    # сохраняется в последующих вопросах); пустые ответы не включаем.
     cursor = await db.execute(
-        "SELECT role, content FROM messages WHERE chat_id = ? AND content != '' ORDER BY id",
+        "SELECT role, content, tool_calls_json FROM messages WHERE chat_id = ? ORDER BY id",
         (chat_id,),
     )
-    history = [{"role": row["role"], "content": row["content"]} for row in await cursor.fetchall()]
+    history = []
+    for row in await cursor.fetchall():
+        text = row["content"]
+        if row["role"] == "user" and row["tool_calls_json"]:
+            try:
+                meta = json.loads(row["tool_calls_json"])
+            except json.JSONDecodeError:
+                meta = {}
+            if isinstance(meta, dict):
+                for att in meta.get("attachments", []):
+                    if att.get("image"):
+                        text += f"\n[приложено изображение: {att.get('filename', '')}]"
+                    elif att.get("text"):
+                        text += f"\n\n[Документ: {att.get('filename', 'файл')}]\n{att['text']}"
+        if text.strip():
+            history.append({"role": row["role"], "content": text})
 
     # Свой промпт чата (§15) имеет приоритет над специализацией
     spec_prompt = (chat["custom_prompt"] or "").strip()
@@ -356,8 +382,12 @@ async def send_message(
     ]
 
     await db.execute(
-        "INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
-        (chat_id, stored_content, utcnow_iso()),
+        "INSERT INTO messages (chat_id, role, content, tool_calls_json, created_at) "
+        "VALUES (?, 'user', ?, ?, ?)",
+        (chat_id, content,
+         json.dumps({"attachments": attachments_meta}, ensure_ascii=False)
+         if attachments_meta else None,
+         utcnow_iso()),
     )
     await db.commit()
 

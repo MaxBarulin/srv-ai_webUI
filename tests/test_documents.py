@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import sqlite3
 import zipfile
 from dataclasses import replace
@@ -256,9 +257,20 @@ def test_chat_message_with_document_text(client, doc_user, monkeypatch):
     assert "Технические требования к сварке" in user_msg["content"]
     assert "[Документ: spec.txt]" in user_msg["content"]
 
-    # В историю сохранён извлечённый текст
+    # В истории текст документа хранится отдельным вложением (не «стеной» в сообщении)
     msgs = client.get(f"/api/chats/{chat_id}/messages").json()
-    assert any("Технические требования" in m["content"] for m in msgs if m["role"] == "user")
+    stored = [m for m in msgs if m["role"] == "user"][0]
+    assert stored["content"] == "Кратко о чём документ?"
+    assert stored["attachments"] == [
+        {"filename": "spec.txt", "text": "Технические требования к сварке."}]
+
+    # В последующем вопросе документ восстанавливается в историю для LLM
+    client.post(f"/api/chats/{chat_id}/messages",
+                json={"content": "уточни", "use_tools": False})
+    followup_history = captured[1]
+    joined = " ".join(str(m["content"]) for m in followup_history)
+    assert "[Документ: spec.txt]" in joined
+    assert "Технические требования к сварке" in joined
 
 
 def test_chat_message_with_image_multimodal(client, doc_user, monkeypatch):
@@ -286,11 +298,12 @@ def test_chat_message_with_image_multimodal(client, doc_user, monkeypatch):
     assert "image_url" in kinds
     assert user_msg["content"][-1]["image_url"]["url"] == data_url
 
-    # В БД изображение не сохраняется — только пометка
+    # В БД изображение не сохраняется — только пометка-вложение с именем файла
     msgs = client.get(f"/api/chats/{chat_id}/messages").json()
-    stored = [m["content"] for m in msgs if m["role"] == "user"][0]
-    assert "приложено изображение: photo.png" in stored
-    assert "base64" not in stored
+    stored = [m for m in msgs if m["role"] == "user"][0]
+    assert stored["attachments"] == [{"filename": "photo.png", "image": True}]
+    # (ответ mock-LLM цитирует запрос, поэтому проверяем только сообщения пользователя)
+    assert "base64" not in json.dumps([m for m in msgs if m["role"] == "user"])
 
 
 def test_attachment_text_truncated(client, doc_user, monkeypatch):
