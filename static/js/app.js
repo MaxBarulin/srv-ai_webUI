@@ -1,6 +1,6 @@
 // Каркас SPA: навигация по разделам, текущий пользователь, раздел «Администрирование».
 import { api } from "/static/js/api.js";
-import { initChat } from "/static/js/chat.js";
+import { initChat, setRagAvailable } from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
 import { initCalendar } from "/static/js/calendar.js";
 
@@ -168,6 +168,7 @@ async function init() {
 
   document.getElementById("create-user-form").addEventListener("submit", createUser);
   initChat(toast);
+  setRagAvailable(Boolean(currentUser.rag_enabled));
   initNotes(toast);
   initCalendar(toast);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));

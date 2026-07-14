@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app import auth
 from app.audit import write_audit
+from app.config import settings
 from app.auth import (
     SESSION_COOKIE,
     client_ip,
@@ -97,7 +98,8 @@ async def logout(
 
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)) -> dict:
-    return user
+    # rag_enabled — чтобы UI знал, показывать ли переключатель «База знаний» (§8)
+    return {**user, "rag_enabled": settings.rag_enabled and bool(settings.rag_base_url)}
 
 
 @router.post("/me/password")

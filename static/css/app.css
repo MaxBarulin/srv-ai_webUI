@@ -475,6 +475,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   border-left: 3px solid var(--osk-line);
   background: transparent;
 }
+.reasoning.sources { border-left-color: var(--osk-red); }
 .reasoning summary {
   cursor: pointer;
   padding: 4px 10px;

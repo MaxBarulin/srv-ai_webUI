@@ -15,6 +15,7 @@ from app.auth import client_ip, get_current_user
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, stream_chat
+from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
     MAX_TOOL_ITERATIONS,
     TOOLS_SPEC,
@@ -43,6 +44,7 @@ class RenameChatRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     use_tools: bool = True  # переключатель «Заметки/Календарь» в шапке чата (§4)
+    use_rag: bool = False   # переключатель «База знаний» (§8)
 
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
@@ -249,6 +251,22 @@ async def send_message(
         finished = False
         msgs = list(llm_messages)
         try:
+            if payload.use_rag and settings.rag_enabled:
+                # Контекст из базы знаний — перед сообщением пользователя (§8).
+                # Недоступность LightRAG не прерывает обычный режим.
+                try:
+                    context = await fetch_context(content)
+                    if context:
+                        msgs.insert(-1, context_message(context))
+                        tool_activity.append(
+                            {"label": "База знаний", "status": "sources", "text": context})
+                        yield _sse("sources", {"text": context})
+                    else:
+                        yield _sse("rag_error",
+                                   {"detail": "База знаний не вернула контекст по этому запросу"})
+                except RAGError as exc:
+                    yield _sse("rag_error", {"detail": str(exc)})
+
             for _ in range(MAX_TOOL_ITERATIONS):
                 step_parts: list[str] = []
                 held: list[str] = []      # придержанный контент (возможный fallback-JSON)

@@ -42,6 +42,10 @@
                 <label class="ctx-toggle" title="Разрешить модели работать с вашими заметками и календарём">
                   <input type="checkbox" id="ctx-tools" checked> Заметки/Календарь
                 </label>
+                <label class="ctx-toggle" id="ctx-rag-label" hidden
+                       title="Перед ответом искать контекст в базе знаний (LightRAG)">
+                  <input type="checkbox" id="ctx-rag"> База знаний
+                </label>
               </div>
               <div class="chat-messages" id="chat-messages"></div>
               <div class="chat-empty" id="chat-empty">

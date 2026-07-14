@@ -21,6 +21,8 @@ export function initChat(toast) {
   els.empty = $("chat-empty");
   els.context = $("chat-context");
   els.ctxTools = $("ctx-tools");
+  els.ctxRag = $("ctx-rag");
+  els.ctxRagLabel = $("ctx-rag-label");
   els.toast = toast;
 
   els.newBtn.addEventListener("click", createChat);
@@ -66,6 +68,11 @@ export function initChat(toast) {
   window.addEventListener("section-shown", (e) => {
     if (e.detail === "chat") refreshChats();
   });
+}
+
+// Вызывается из app.js после /api/me
+export function setRagAvailable(available) {
+  els.ctxRagLabel.hidden = !available;
 }
 
 // --- Список чатов ---
@@ -171,6 +178,19 @@ function reasoningBlock(text, open = false) {
   return details;
 }
 
+function sourcesBlock(text) {
+  const details = document.createElement("details");
+  details.className = "reasoning sources";
+  const summary = document.createElement("summary");
+  summary.textContent = "Источники";
+  details.appendChild(summary);
+  const body = document.createElement("div");
+  body.className = "reasoning-body";
+  body.textContent = text;
+  details.appendChild(body);
+  return details;
+}
+
 function toolChip({ label, status, token }) {
   const chip = document.createElement("div");
   chip.className = "tool-chip";
@@ -198,7 +218,10 @@ function messageNode(msg) {
   div.className = `msg msg-${msg.role}`;
   if (msg.role === "assistant") {
     if (msg.reasoning) div.appendChild(reasoningBlock(msg.reasoning));
-    for (const activity of msg.tool_activity || []) div.appendChild(toolChip(activity));
+    for (const activity of msg.tool_activity || []) {
+      div.appendChild(activity.status === "sources"
+        ? sourcesBlock(activity.text || "") : toolChip(activity));
+    }
     const body = document.createElement("div");
     body.className = "msg-body";
     body.innerHTML = renderMarkdown(msg.content);
@@ -286,7 +309,11 @@ async function sendMessage() {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, use_tools: els.ctxTools.checked }),
+      body: JSON.stringify({
+        content,
+        use_tools: els.ctxTools.checked,
+        use_rag: !els.ctxRagLabel.hidden && els.ctxRag.checked,
+      }),
       signal: abortController.signal,
     });
     if (r.status === 401) { location.href = "/login"; return; }
@@ -310,6 +337,13 @@ async function sendMessage() {
           live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
         } else if (event === "tool_confirm") {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
+        } else if (event === "sources") {
+          live.insertBefore(sourcesBlock(data.text), liveBody);
+        } else if (event === "rag_error") {
+          const note = document.createElement("div");
+          note.className = "msg-note msg-error";
+          note.textContent = data.detail;
+          live.insertBefore(note, liveBody);
         } else if (event === "error") throw new Error(data.detail);
         else if (event === "done" && data.title) renamed = data.title;
       });
