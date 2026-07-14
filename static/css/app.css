@@ -435,6 +435,40 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-note { margin-top: 6px; font-size: 12px; color: var(--osk-slate); font-style: italic; }
 .msg-note.msg-error { color: var(--osk-red-dark); font-style: normal; }
 
+/* Переключатели контекста в шапке чата (§4) */
+.chat-context {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 8px 24px;
+  background: var(--osk-paper);
+  border-bottom: 1px solid var(--osk-line);
+  font-size: 13px;
+  color: var(--osk-slate);
+}
+.chat-context[hidden] { display: none; }
+.ctx-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; }
+.ctx-toggle input { width: auto; margin: 0; }
+
+/* Плашки действий инструментов (§7) */
+.tool-chip {
+  max-width: 860px;
+  margin: 0 auto 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--osk-slate);
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  border-left: 3px solid var(--osk-slate);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tool-chip.error { border-left-color: var(--osk-red); color: var(--osk-red-dark); }
+.tool-chip.confirm { border-left-color: var(--osk-red); }
+.tool-chip .tool-confirm-btn { flex-shrink: 0; }
+
 /* Размышления (reasoning) */
 .reasoning {
   margin-bottom: 6px;

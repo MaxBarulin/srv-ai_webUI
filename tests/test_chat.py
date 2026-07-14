@@ -122,9 +122,9 @@ def test_reasoning_not_sent_back_to_llm(client, chat_user, monkeypatch):
     captured: list[list[dict]] = []
     orig = llm_module.stream_chat
 
-    def spy(messages):
+    def spy(messages, tools=None):
         captured.append(messages)
-        return orig(messages)
+        return orig(messages, tools=tools)
 
     monkeypatch.setattr("app.routers.chat.stream_chat", spy)
 
