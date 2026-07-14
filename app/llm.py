@@ -51,13 +51,37 @@ def make_client() -> httpx.AsyncClient:
     )
 
 
-async def stream_chat(messages: list[dict]) -> AsyncIterator[tuple[str, str]]:
-    """Yield ("reasoning" | "content", delta_text) from a streaming completion."""
+def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
+    """Собрать стриминговые дельты tool_calls (OpenAI формат) по индексам."""
+    for tc in deltas:
+        index = tc.get("index", 0)
+        entry = acc.setdefault(index, {
+            "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+        if tc.get("id"):
+            entry["id"] = tc["id"]
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            entry["function"]["name"] += fn["name"]
+        if fn.get("arguments"):
+            entry["function"]["arguments"] += fn["arguments"]
+
+
+async def stream_chat(
+    messages: list[dict], tools: list[dict] | None = None
+) -> AsyncIterator[tuple[str, str]]:
+    """Yield ("reasoning" | "content", delta_text) from a streaming completion.
+
+    Если модель вернула вызовы инструментов — последним элементом отдаётся
+    ("tool_calls", JSON-список в формате OpenAI).
+    """
     payload = {
         "model": settings.llm_model,
         "messages": messages,
         "stream": True,
     }
+    if tools:
+        payload["tools"] = tools
+    tool_calls: dict[int, dict] = {}
     try:
         async with make_client() as client:
             async with client.stream("POST", "/chat/completions", json=payload) as response:
@@ -69,7 +93,7 @@ async def stream_chat(messages: list[dict]) -> AsyncIterator[tuple[str, str]]:
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
-                        return
+                        break
                     try:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
@@ -84,5 +108,12 @@ async def stream_chat(messages: list[dict]) -> AsyncIterator[tuple[str, str]]:
                     content = delta.get("content")
                     if content:
                         yield "content", content
+                    if delta.get("tool_calls"):
+                        _merge_tool_call_delta(tool_calls, delta["tool_calls"])
     except httpx.HTTPError as exc:
         raise LLMError(f"LLM недоступен: {exc}") from exc
+    if tool_calls:
+        calls = [tool_calls[i] for i in sorted(tool_calls)]
+        calls = [c for c in calls if c["function"]["name"]]
+        if calls:
+            yield "tool_calls", json.dumps(calls, ensure_ascii=False)

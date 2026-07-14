@@ -435,6 +435,40 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-note { margin-top: 6px; font-size: 12px; color: var(--osk-slate); font-style: italic; }
 .msg-note.msg-error { color: var(--osk-red-dark); font-style: normal; }
 
+/* Переключатели контекста в шапке чата (§4) */
+.chat-context {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 8px 24px;
+  background: var(--osk-paper);
+  border-bottom: 1px solid var(--osk-line);
+  font-size: 13px;
+  color: var(--osk-slate);
+}
+.chat-context[hidden] { display: none; }
+.ctx-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; }
+.ctx-toggle input { width: auto; margin: 0; }
+
+/* Плашки действий инструментов (§7) */
+.tool-chip {
+  max-width: 860px;
+  margin: 0 auto 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--osk-slate);
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  border-left: 3px solid var(--osk-slate);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tool-chip.error { border-left-color: var(--osk-red); color: var(--osk-red-dark); }
+.tool-chip.confirm { border-left-color: var(--osk-red); }
+.tool-chip .tool-confirm-btn { flex-shrink: 0; }
+
 /* Размышления (reasoning) */
 .reasoning {
   margin-bottom: 6px;
@@ -688,6 +722,187 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   .msg-user .msg-body { margin-left: 8%; }
   .notes-layout { grid-template-columns: 250px 1fr; }
 }
+
+/* ===== Календарь ===== */
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  background: var(--osk-paper);
+  border-bottom: 1px solid var(--osk-line);
+  flex-wrap: wrap;
+}
+.cal-nav { display: flex; align-items: center; gap: 6px; }
+.cal-title {
+  margin-left: 12px;
+  font-family: var(--font-display, inherit);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 15px;
+}
+.cal-controls { display: flex; align-items: center; gap: 12px; }
+.cal-controls select { font-size: 13px; padding: 6px 10px; }
+.cal-tabs { display: flex; gap: 2px; }
+.cal-tabs .tab { border-bottom: 1px solid var(--osk-line); }
+.cal-tabs .tab.active { border-bottom-color: var(--osk-paper); }
+
+.cal-month {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 20px 20px;
+}
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  font-size: 12px;
+  color: var(--osk-slate);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-bottom: 6px;
+}
+.cal-weekdays div { padding-left: 8px; }
+.cal-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
+  border-top: 1px solid var(--osk-line);
+  border-left: 1px solid var(--osk-line);
+  min-height: 0;
+}
+.cal-cell {
+  border-right: 1px solid var(--osk-line);
+  border-bottom: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  padding: 4px 6px;
+  min-height: 0;
+  overflow-y: auto;
+  cursor: pointer;
+}
+.cal-cell:hover { background: var(--osk-bg); }
+.cal-cell.other { background: var(--osk-bg); }
+.cal-cell.other .cal-day-num { color: var(--osk-line); }
+.cal-day-num { font-size: 12.5px; font-weight: 700; color: var(--osk-slate); }
+.cal-cell.today .cal-day-num {
+  display: inline-block;
+  min-width: 20px;
+  text-align: center;
+  background: var(--osk-red);
+  color: #fff;
+  padding: 0 4px;
+}
+.cal-chip {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 2px 6px;
+  background: var(--osk-bg);
+  border-left: 3px solid var(--osk-slate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cal-chip:hover { background: var(--osk-line); }
+.cal-chip.shared { border-left-color: var(--osk-red); }
+
+.cal-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+}
+.cal-list-empty { color: var(--osk-slate); padding: 40px 0; text-align: center; }
+.cal-day-group { max-width: 860px; margin: 0 auto 22px; }
+.cal-day-heading {
+  font-weight: 700;
+  font-size: 14px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--osk-dark);
+  margin-bottom: 6px;
+}
+.cal-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--osk-line);
+  cursor: pointer;
+}
+.cal-row:hover { background: var(--osk-paper); }
+.cal-row-time {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--osk-slate);
+}
+.cal-row-main { flex: 1; min-width: 0; }
+.cal-row-title {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-row-meta { font-size: 12px; color: var(--osk-slate); margin-top: 2px; }
+
+/* ===== Модальное окно ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(30, 42, 51, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  background: var(--osk-paper);
+  padding: 24px 28px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+}
+.modal h3 { margin: 0 0 14px; font-size: 17px; }
+.modal label { display: block; margin-top: 10px; }
+.modal input[type="text"], .modal textarea, .modal select { width: 100%; }
+.modal textarea,
+.modal input[type="date"], .modal input[type="time"] {
+  padding: 8px 12px;
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  font-family: var(--font-text);
+  font-size: 14px;
+  color: #22292E;
+}
+.modal textarea { resize: vertical; }
+.modal textarea:focus,
+.modal input[type="date"]:focus, .modal input[type="time"]:focus {
+  outline: 2px solid var(--osk-red);
+  outline-offset: -1px;
+}
+.event-allday {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.event-allday input { width: auto; }
+.event-dt { display: flex; gap: 8px; }
+.event-dt input[type="date"] { flex: 1; }
+.event-dt input[type="time"] { width: 130px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+.modal-actions .btn-danger { margin-left: auto; }
+.btn-danger { color: var(--osk-red-dark); border-color: var(--osk-red); }
+.btn-danger:hover { background: var(--osk-red); color: #fff; }
 
 .toast {
   position: fixed;

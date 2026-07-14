@@ -19,6 +19,8 @@ export function initChat(toast) {
   els.sendBtn = $("chat-send-btn");
   els.stopBtn = $("chat-stop-btn");
   els.empty = $("chat-empty");
+  els.context = $("chat-context");
+  els.ctxTools = $("ctx-tools");
   els.toast = toast;
 
   els.newBtn.addEventListener("click", createChat);
@@ -43,6 +45,22 @@ export function initChat(toast) {
       btn.textContent = "Скопировано";
       setTimeout(() => { btn.textContent = "Копировать"; }, 1500);
     });
+  });
+
+  // Кнопки «Подтвердить» деструктивных действий инструментов
+  els.messages.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".tool-confirm-btn");
+    if (!btn) return;
+    btn.disabled = true;
+    const chip = btn.closest(".tool-chip");
+    try {
+      const r = await api("/api/tools/confirm", { method: "POST", body: { token: btn.dataset.token } });
+      chip.classList.remove("confirm");
+      chip.textContent = `🔧 ${r.label}`;
+    } catch (err) {
+      chip.classList.add("error");
+      chip.textContent = `🔧 ${err.detail || "Не удалось выполнить действие"}`;
+    }
   });
 
   window.addEventListener("section-shown", (e) => {
@@ -153,11 +171,34 @@ function reasoningBlock(text, open = false) {
   return details;
 }
 
+function toolChip({ label, status, token }) {
+  const chip = document.createElement("div");
+  chip.className = "tool-chip";
+  if (status === "error") chip.classList.add("error");
+  if (status === "confirm" && token) {
+    chip.classList.add("confirm");
+    chip.textContent = `🔧 Модель запрашивает: ${label} `;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-small tool-confirm-btn";
+    btn.dataset.token = token;
+    btn.textContent = "Подтвердить";
+    chip.appendChild(btn);
+  } else if (status === "confirm") {
+    // из истории: токен не сохраняется, подтверждение доступно только в живом стриме
+    chip.textContent = `🔧 Запрошено подтверждение: ${label}`;
+  } else {
+    chip.textContent = `🔧 ${label}`;
+  }
+  return chip;
+}
+
 function messageNode(msg) {
   const div = document.createElement("div");
   div.className = `msg msg-${msg.role}`;
   if (msg.role === "assistant") {
     if (msg.reasoning) div.appendChild(reasoningBlock(msg.reasoning));
+    for (const activity of msg.tool_activity || []) div.appendChild(toolChip(activity));
     const body = document.createElement("div");
     body.className = "msg-body";
     body.innerHTML = renderMarkdown(msg.content);
@@ -183,6 +224,7 @@ function updateInputState() {
   const hasChat = activeChatId !== null;
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
+  els.context.hidden = !hasChat;
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;
   els.stopBtn.hidden = !streaming;
@@ -244,7 +286,7 @@ async function sendMessage() {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, use_tools: els.ctxTools.checked }),
       signal: abortController.signal,
     });
     if (r.status === 401) { location.href = "/login"; return; }
@@ -264,7 +306,11 @@ async function sendMessage() {
       buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
         if (event === "reasoning") reasoningText += data.text;
         else if (event === "content") contentText += data.text;
-        else if (event === "error") throw new Error(data.detail);
+        else if (event === "tool") {
+          live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
+        } else if (event === "tool_confirm") {
+          live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
+        } else if (event === "error") throw new Error(data.detail);
         else if (event === "done" && data.title) renamed = data.title;
       });
       render();
@@ -289,7 +335,8 @@ async function sendMessage() {
   } finally {
     abortController = null;
     updateInputState();
-    if (!reasoningText && !contentText && !live.querySelector(".msg-note")) live.remove();
+    if (!reasoningText && !contentText
+        && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip")) live.remove();
     els.input.focus();
   }
 }

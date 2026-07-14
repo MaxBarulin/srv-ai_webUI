@@ -38,6 +38,11 @@
               <ul class="chat-list" id="chat-list"></ul>
             </aside>
             <div class="chat-main">
+              <div class="chat-context" id="chat-context" hidden>
+                <label class="ctx-toggle" title="Разрешить модели работать с вашими заметками и календарём">
+                  <input type="checkbox" id="ctx-tools" checked> Заметки/Календарь
+                </label>
+              </div>
               <div class="chat-messages" id="chat-messages"></div>
               <div class="chat-empty" id="chat-empty">
                 <div class="display">Нет чатов</div>
@@ -116,9 +121,86 @@
         </section>
 
         <section id="section-calendar" hidden>
-          <div class="placeholder">
-            <div class="display">Календарь — в разработке</div>
-            <p>Раздел появится на этапе 3.</p>
+          <div class="cal-toolbar">
+            <div class="cal-nav">
+              <button type="button" class="btn btn-small" id="cal-prev" title="Предыдущий месяц">‹</button>
+              <button type="button" class="btn btn-small" id="cal-today">Сегодня</button>
+              <button type="button" class="btn btn-small" id="cal-next" title="Следующий месяц">›</button>
+              <span class="cal-title" id="cal-title"></span>
+            </div>
+            <div class="cal-controls">
+              <select id="cal-scope">
+                <option value="all" selected>Все события</option>
+                <option value="personal">Личные</option>
+                <option value="shared">Общие</option>
+              </select>
+              <div class="cal-tabs">
+                <button type="button" class="tab active" id="cal-tab-month">Месяц</button>
+                <button type="button" class="tab" id="cal-tab-list">Список</button>
+              </div>
+              <button type="button" class="btn btn-primary" id="event-new-btn">Новое событие</button>
+            </div>
+          </div>
+
+          <div class="cal-month" id="cal-month">
+            <div class="cal-weekdays">
+              <div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div>
+            </div>
+            <div class="cal-grid" id="cal-grid"></div>
+          </div>
+
+          <div class="cal-list" id="cal-list" hidden></div>
+
+          <div class="modal-backdrop" id="event-modal" hidden>
+            <form class="modal" id="event-form">
+              <h3 id="event-modal-title">Новое событие</h3>
+              <label for="event-title">Название</label>
+              <input type="text" id="event-title" required>
+
+              <label for="event-description">Описание</label>
+              <textarea id="event-description" rows="3"></textarea>
+
+              <div class="form-row">
+                <div>
+                  <label for="event-location">Место</label>
+                  <input type="text" id="event-location">
+                </div>
+                <div>
+                  <label for="event-scope">Область</label>
+                  <select id="event-scope">
+                    <option value="personal" selected>Личное</option>
+                    <option value="shared">Общее</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="event-allday"><input type="checkbox" id="event-allday"> Весь день</label>
+
+              <div class="form-row">
+                <div>
+                  <label for="event-start-date">Начало</label>
+                  <div class="event-dt">
+                    <input type="date" id="event-start-date" required>
+                    <input type="time" id="event-start-time" required>
+                  </div>
+                </div>
+                <div>
+                  <label for="event-end-date">Окончание</label>
+                  <div class="event-dt">
+                    <input type="date" id="event-end-date" required>
+                    <input type="time" id="event-end-time" required>
+                  </div>
+                </div>
+              </div>
+
+              <div class="note-meta" id="event-modal-meta"></div>
+
+              <div class="modal-actions">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+                <button type="button" class="btn" id="event-cancel-btn">Отмена</button>
+                <button type="button" class="btn btn-danger" id="event-delete-btn" hidden>Удалить</button>
+              </div>
+            </form>
           </div>
         </section>
 
