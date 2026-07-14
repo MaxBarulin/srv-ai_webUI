@@ -23,7 +23,12 @@ export function initChat(toast) {
   els.ctxTools = $("ctx-tools");
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
+  els.spec = $("chat-spec");
+  els.examples = $("chat-examples");
   els.toast = toast;
+
+  loadSpecializations();
+  loadExamples();
 
   els.newBtn.addEventListener("click", createChat);
   els.form.addEventListener("submit", (e) => {
@@ -47,6 +52,29 @@ export function initChat(toast) {
       btn.textContent = "Скопировано";
       setTimeout(() => { btn.textContent = "Копировать"; }, 1500);
     });
+  });
+
+  // Кнопки «Копировать для Excel» у markdown-таблиц (§15)
+  els.messages.addEventListener("click", (e) => {
+    const btn = e.target.closest(".table-excel");
+    if (!btn) return;
+    const table = btn.parentElement.querySelector("table");
+    if (!table) return;
+    const tsv = [...table.rows].map((row) =>
+      [...row.cells].map((c) => c.textContent.replace(/\t/g, " ")).join("\t")).join("\n");
+    navigator.clipboard.writeText(tsv).then(() => {
+      btn.textContent = "Скопировано";
+      setTimeout(() => { btn.textContent = "Копировать для Excel"; }, 1500);
+    });
+  });
+
+  // Кнопки обратной связи 👍/👎 (§15)
+  els.messages.addEventListener("click", (e) => {
+    const btn = e.target.closest(".fb-btn");
+    if (!btn) return;
+    const rating = Number(btn.dataset.rating);
+    const msgId = Number(btn.closest(".msg").dataset.messageId);
+    if (msgId) submitFeedback(msgId, rating, btn.closest(".msg"));
   });
 
   // Кнопки «Подтвердить» деструктивных действий инструментов
@@ -73,6 +101,66 @@ export function initChat(toast) {
 // Вызывается из app.js после /api/me
 export function setRagAvailable(available) {
   els.ctxRagLabel.hidden = !available;
+}
+
+// --- Специализации и примеры (§15) ---
+
+async function loadSpecializations() {
+  try {
+    const specs = await api("/api/specializations");
+    els.spec.replaceChildren(...specs.map((s) => {
+      const opt = document.createElement("option");
+      opt.value = String(s.id);
+      opt.textContent = s.name;
+      return opt;
+    }));
+    els.spec.hidden = specs.length <= 1;
+  } catch {
+    els.spec.hidden = true;
+  }
+}
+
+async function loadExamples() {
+  try {
+    const examples = await api("/api/examples");
+    els.examples.replaceChildren(...examples.map((ex) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "example-chip";
+      btn.textContent = ex.text;
+      btn.addEventListener("click", () => useExample(ex.text));
+      return btn;
+    }));
+  } catch { /* примеры необязательны */ }
+}
+
+async function useExample(text) {
+  await createChat();
+  els.input.value = text;
+  els.input.focus();
+}
+
+async function submitFeedback(messageId, rating, msgEl) {
+  let comment = "";
+  if (rating === -1) {
+    const answer = prompt("Что не так с ответом? (необязательно)");
+    if (answer === null) return; // отмена
+    comment = answer;
+  }
+  try {
+    await api(`/api/chats/${activeChatId}/messages/${messageId}/feedback`,
+              { method: "POST", body: { rating, comment } });
+    setFeedbackState(msgEl, rating);
+    els.toast("Спасибо за оценку");
+  } catch (e) {
+    els.toast(e.detail || "Не удалось сохранить оценку", true);
+  }
+}
+
+function setFeedbackState(msgEl, rating) {
+  msgEl.querySelectorAll(".fb-btn").forEach((b) => {
+    b.classList.toggle("active", Number(b.dataset.rating) === rating);
+  });
 }
 
 // --- Список чатов ---
@@ -129,7 +217,9 @@ async function selectChat(id) {
 }
 
 async function createChat() {
-  const chat = await api("/api/chats", { method: "POST", body: {} });
+  const body = {};
+  if (!els.spec.hidden && els.spec.value) body.specialization_id = Number(els.spec.value);
+  const chat = await api("/api/chats", { method: "POST", body });
   activeChatId = chat.id;
   await refreshChats();
   els.input.focus();
@@ -213,10 +303,27 @@ function toolChip({ label, status, token }) {
   return chip;
 }
 
+function feedbackBar(rating) {
+  const bar = document.createElement("div");
+  bar.className = "feedback-bar";
+  for (const [value, label, title] of [[1, "👍", "Хороший ответ"], [-1, "👎", "Плохой ответ"]]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fb-btn";
+    if (rating === value) btn.classList.add("active");
+    btn.dataset.rating = String(value);
+    btn.textContent = label;
+    btn.title = title;
+    bar.appendChild(btn);
+  }
+  return bar;
+}
+
 function messageNode(msg) {
   const div = document.createElement("div");
   div.className = `msg msg-${msg.role}`;
   if (msg.role === "assistant") {
+    if (msg.id) div.dataset.messageId = String(msg.id);
     if (msg.reasoning) div.appendChild(reasoningBlock(msg.reasoning));
     for (const activity of msg.tool_activity || []) {
       div.appendChild(activity.status === "sources"
@@ -226,6 +333,7 @@ function messageNode(msg) {
     body.className = "msg-body";
     body.innerHTML = renderMarkdown(msg.content);
     div.appendChild(body);
+    if (msg.id) div.appendChild(feedbackBar(msg.feedback_rating));
   } else {
     const body = document.createElement("div");
     body.className = "msg-body";
@@ -281,16 +389,21 @@ async function sendMessage() {
   // Живой контейнер ответа
   const live = document.createElement("div");
   live.className = "msg msg-assistant";
+  const queueNote = document.createElement("div");
+  queueNote.className = "msg-note queue-note";
+  queueNote.hidden = true;
   const liveReasoning = reasoningBlock("", false);
   liveReasoning.hidden = true;
   const liveBody = document.createElement("div");
   liveBody.className = "msg-body";
+  live.appendChild(queueNote);
   live.appendChild(liveReasoning);
   live.appendChild(liveBody);
   els.messages.appendChild(live);
 
   let reasoningText = "";
   let contentText = "";
+  let messageId = null;
   const chatId = activeChatId;
 
   abortController = new AbortController();
@@ -331,7 +444,12 @@ async function sendMessage() {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
-        if (event === "reasoning") reasoningText += data.text;
+        if (event === "queued") {
+          queueNote.hidden = false;
+          queueNote.textContent = `В очереди: ${data.position}…`;
+        } else if (event === "queue_ready") {
+          queueNote.hidden = true;
+        } else if (event === "reasoning") reasoningText += data.text;
         else if (event === "content") contentText += data.text;
         else if (event === "tool") {
           live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
@@ -345,7 +463,10 @@ async function sendMessage() {
           note.textContent = data.detail;
           live.insertBefore(note, liveBody);
         } else if (event === "error") throw new Error(data.detail);
-        else if (event === "done" && data.title) renamed = data.title;
+        else if (event === "done") {
+          if (data.title) renamed = data.title;
+          if (data.message_id) messageId = data.message_id;
+        }
       });
       render();
     }
@@ -353,6 +474,11 @@ async function sendMessage() {
     if (renamed) {
       const chat = chats.find((c) => c.id === chatId);
       if (chat) { chat.title = renamed; renderChatList(); }
+    }
+    // Панель оценки ответа (§15) — только если ответ сохранён
+    if (messageId && (contentText || live.querySelector(".tool-chip"))) {
+      live.dataset.messageId = String(messageId);
+      live.appendChild(feedbackBar(null));
     }
   } catch (e) {
     if (e.name === "AbortError") {
