@@ -1,0 +1,161 @@
+"""PII filter tests (§13): регулярки, Луна, белый список, NER, интеграция."""
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import replace
+
+import httpx
+import pytest
+
+from app import llm as llm_module
+from app import pii as pii_module
+from app.config import settings
+from tests.conftest import login_as
+from tests.mock_llm import app as mock_llm_app
+from tests.test_chat import _parse_sse
+
+PASS = "pii-user-pass-01"
+
+
+def _clear_wl_cache():
+    clear = getattr(pii_module._whitelist, "cache_clear", None)
+    if clear:
+        clear()
+
+
+@pytest.fixture(autouse=True)
+def enable_pii(monkeypatch):
+    monkeypatch.setattr(pii_module, "settings",
+                        replace(settings, pii_filter=True, pii_whitelist_file=""))
+    _clear_wl_cache()
+    yield
+    _clear_wl_cache()
+
+
+def mask(text):
+    return pii_module.mask_text(text)
+
+
+def test_filter_disabled_passes_through(monkeypatch):
+    monkeypatch.setattr(pii_module, "settings", replace(settings, pii_filter=False))
+    r = mask("email: test@example.com")
+    assert r.text == "email: test@example.com"
+    assert r.total == 0
+
+
+def test_mask_email():
+    r = mask("Пишите на ivanov@zavod.ru пожалуйста")
+    assert "[EMAIL]" in r.text
+    assert "ivanov@zavod.ru" not in r.text
+    assert r.counts["EMAIL"] == 1
+
+
+def test_mask_phone():
+    for phone in ("+7 900 123-45-67", "8(900)123-45-67", "89001234567"):
+        r = mask(f"звоните {phone}")
+        assert "[ТЕЛЕФОН]" in r.text, phone
+
+
+def test_mask_snils():
+    r = mask("СНИЛС 112-233-445 95")
+    assert "[СНИЛС]" in r.text
+
+
+def test_mask_card_luhn_only():
+    # Валидная по Луну карта маскируется
+    r = mask("карта 4111 1111 1111 1111 оплата")
+    assert "[КАРТА]" in r.text
+    # Невалидная по Луну последовательность не считается картой
+    r2 = mask("номер 1234 5678 9012 3456 просто")
+    assert "[КАРТА]" not in r2.text
+
+
+def test_mask_account_20_digits():
+    r = mask("счёт 40702810900000012345 в банке")
+    assert "[СЧЁТ]" in r.text
+
+
+def test_mask_inn():
+    r = mask("ИНН 7707083893 организации")
+    assert "[ИНН]" in r.text
+
+
+def test_whitelist_excludes(monkeypatch, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("Иванов\n# комментарий\nzavod.ru\n", encoding="utf-8")
+    monkeypatch.setattr(pii_module, "settings",
+                        replace(settings, pii_filter=True, pii_whitelist_file=str(wl)))
+    pii_module._whitelist.cache_clear()
+    # email в белом списке по домену не сработает как точное совпадение — проверим ФИО ниже
+    assert "zavod.ru" in pii_module._whitelist()
+
+
+def test_ner_masks_full_name():
+    # NER-модель установлена в окружении; при отсутствии тест будет пропущен
+    if not pii_module._load_ner():
+        pytest.skip("NER-модель недоступна")
+    r = mask("Приказ подписал Иванов Иван Иванович, начальник цеха.")
+    assert "[ФИО]" in r.text
+    assert "Иванов" not in r.text
+    assert r.counts.get("ФИО", 0) >= 1
+
+
+def test_ner_whitelist_keeps_name(monkeypatch):
+    if not pii_module._load_ner():
+        pytest.skip("NER-модель недоступна")
+    import app.pii as p
+
+    monkeypatch.setattr(p, "_whitelist", lambda: {"иванов иван иванович"})
+    r = mask("Документ утвердил Иванов Иван Иванович.")
+    assert "Иванов Иван Иванович" in r.text
+
+
+# --- Интеграция с чатом ---
+
+@pytest.fixture()
+def pii_chat(client, make_user, monkeypatch):
+    monkeypatch.setattr(llm_module, "_transport", httpx.ASGITransport(app=mock_llm_app))
+    monkeypatch.setattr("app.routers.chat.mask_text", pii_module.mask_text)
+    make_user("pii-user", PASS)
+    login_as(client, "pii-user", PASS)
+    yield
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        conn.execute("DELETE FROM messages")
+        conn.execute("DELETE FROM chats")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_chat_masks_before_llm_and_storage(client, pii_chat, monkeypatch):
+    captured = []
+    orig = llm_module.stream_chat
+
+    def spy(messages, tools=None):
+        captured.append(messages)
+        return orig(messages, tools=tools)
+
+    monkeypatch.setattr("app.routers.chat.stream_chat", spy)
+
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Мой email ivanov@zavod.ru и телефон +7 900 123-45-67",
+        "use_tools": False,
+    })
+    events = _parse_sse(r.text)
+
+    # Плашка ПДн отдана в UI
+    masked = [d for e, d in events if e == "pii_masked"]
+    assert masked and masked[0]["count"] >= 2
+
+    # В LLM ушёл очищенный текст
+    user_msg = captured[0][-1]["content"]
+    assert "ivanov@zavod.ru" not in user_msg
+    assert "[EMAIL]" in user_msg
+
+    # В историю сохранён очищенный текст (исходные ПДн не попадают в БД)
+    msgs = client.get(f"/api/chats/{chat_id}/messages").json()
+    stored = [m["content"] for m in msgs if m["role"] == "user"][0]
+    assert "ivanov@zavod.ru" not in stored
+    assert "+7 900 123-45-67" not in stored

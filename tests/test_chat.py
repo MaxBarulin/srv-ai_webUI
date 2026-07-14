@@ -145,8 +145,9 @@ def test_llm_error_reported_and_user_message_kept(client, chat_user):
     r = client.post(f"/api/chats/{chat_id}/messages", json={"content": "вызови ERROR500"})
     assert r.status_code == 200
     events = _parse_sse(r.text)
-    assert events[0][0] == "error"
-    assert "HTTP 500" in events[0][1]["detail"]
+    errors = [data for event, data in events if event == "error"]
+    assert len(errors) == 1
+    assert "HTTP 500" in errors[0]["detail"]
 
     msgs = client.get(f"/api/chats/{chat_id}/messages").json()
     assert [m["role"] for m in msgs] == ["user"]

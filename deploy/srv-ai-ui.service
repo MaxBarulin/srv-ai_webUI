@@ -1,0 +1,31 @@
+[Unit]
+Description=srv-ai webUI (корпоративный веб-интерфейс для LLM)
+After=network.target
+
+[Service]
+Type=simple
+User=srv-ai-ui
+Group=srv-ai-ui
+WorkingDirectory=/opt/srv-ai-ui
+EnvironmentFile=/opt/srv-ai-ui/.env
+# Хост/порт берутся из .env (APP_HOST, APP_PORT)
+ExecStart=/opt/srv-ai-ui/venv/bin/python -m uvicorn app.main:app --host ${APP_HOST} --port ${APP_PORT}
+Restart=on-failure
+RestartSec=5
+
+# Логи — в journald (stdout/stderr)
+StandardOutput=journal
+StandardError=journal
+
+# Усиление безопасности (§13): минимум привилегий
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/srv-ai-ui/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

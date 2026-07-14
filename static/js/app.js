@@ -1,6 +1,6 @@
 // Каркас SPA: навигация по разделам, текущий пользователь, раздел «Администрирование».
 import { api } from "/static/js/api.js";
-import { initChat } from "/static/js/chat.js";
+import { initChat, setRagAvailable } from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
 import { initCalendar } from "/static/js/calendar.js";
 
@@ -106,6 +106,239 @@ async function loadUsers() {
   } catch (e) {
     toast(e.detail || "Не удалось загрузить пользователей", true);
   }
+  loadSpecs();
+  loadExamplesAdmin();
+  loadMetrics();
+  loadAudit();
+}
+
+// --- Администрирование: метрики (§13) ---
+
+const METRIC_LABELS = {
+  requests_total: "Всего запросов",
+  requests_success: "Успешных",
+  requests_failed: "Неуспешных",
+  avg_tokens_per_sec: "Токенов/с (средн.)",
+};
+
+async function loadMetrics() {
+  try {
+    const m = await api("/api/admin/metrics");
+    const grid = document.getElementById("metrics-grid");
+    const tiles = Object.entries(METRIC_LABELS).map(([key, label]) => {
+      const tile = document.createElement("div");
+      tile.className = "metric-tile";
+      const value = document.createElement("div");
+      value.className = "metric-value";
+      value.textContent = m[key] ?? 0;
+      const cap = document.createElement("div");
+      cap.className = "metric-label";
+      cap.textContent = label;
+      tile.append(value, cap);
+      return tile;
+    });
+    const pii = m.pii_masked_by_type || {};
+    const piiTotal = Object.values(pii).reduce((a, b) => a + b, 0);
+    if (piiTotal) {
+      const tile = document.createElement("div");
+      tile.className = "metric-tile";
+      const value = document.createElement("div");
+      value.className = "metric-value";
+      value.textContent = piiTotal;
+      const cap = document.createElement("div");
+      cap.className = "metric-label";
+      cap.textContent = "ПДн замаскировано (" +
+        Object.entries(pii).map(([k, v]) => `${k}: ${v}`).join(", ") + ")";
+      tile.append(value, cap);
+      tiles.push(tile);
+    }
+    grid.replaceChildren(...tiles);
+  } catch { /* метрики необязательны */ }
+}
+
+// --- Администрирование: журнал аудита (§13) ---
+
+let auditOffset = 0;
+const AUDIT_LIMIT = 50;
+
+async function loadAudit() {
+  const action = document.getElementById("audit-action").value;
+  const params = new URLSearchParams({ limit: AUDIT_LIMIT, offset: auditOffset });
+  if (action) params.set("action", action);
+  try {
+    const data = await api(`/api/admin/audit?${params}`);
+    const tbody = document.getElementById("audit-tbody");
+    tbody.replaceChildren(...data.items.map(auditRow));
+    document.getElementById("audit-total").textContent = `Всего записей: ${data.total}`;
+    document.getElementById("audit-prev").disabled = auditOffset === 0;
+    document.getElementById("audit-next").disabled = auditOffset + AUDIT_LIMIT >= data.total;
+  } catch (e) {
+    toast(e.detail || "Не удалось загрузить журнал", true);
+  }
+}
+
+function auditRow(item) {
+  const tr = document.createElement("tr");
+  const object = [item.object_type, item.object_id].filter(Boolean).join(" #");
+  const cells = [
+    (item.created_at || "").replace("T", " ").slice(0, 19),
+    item.user_login || "—",
+    item.action,
+    object || "—",
+    item.details || "",
+    item.ip || "",
+  ];
+  for (const text of cells) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+// --- Администрирование: специализации ---
+
+function specRow(spec) {
+  const tr = document.createElement("tr");
+  const mk = (value, type = "text") => {
+    const input = document.createElement(type === "textarea" ? "textarea" : "input");
+    if (type !== "textarea") input.type = type;
+    input.value = value ?? "";
+    return input;
+  };
+  const order = mk(spec.sort_order, "number");
+  order.style.width = "60px";
+  const name = mk(spec.name);
+  const promptField = mk(spec.system_prompt, "textarea");
+  promptField.rows = 2;
+  const active = document.createElement("input");
+  active.type = "checkbox";
+  active.checked = Boolean(spec.is_active);
+
+  for (const cell of [order, name, promptField, active]) {
+    const td = document.createElement("td");
+    td.appendChild(cell);
+    tr.appendChild(td);
+  }
+
+  const actions = document.createElement("td");
+  actions.className = "actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-small";
+  saveBtn.textContent = "Сохранить";
+  saveBtn.addEventListener("click", () => saveSpec(spec.id, {
+    name: name.value.trim(),
+    system_prompt: promptField.value,
+    is_active: active.checked,
+    sort_order: Number(order.value) || 0,
+  }));
+  actions.appendChild(saveBtn);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "btn btn-small ml-8";
+  delBtn.textContent = "Удалить";
+  delBtn.addEventListener("click", () => deleteSpec(spec.id, spec.name));
+  actions.appendChild(delBtn);
+  tr.appendChild(actions);
+  return tr;
+}
+
+async function loadSpecs() {
+  try {
+    const specs = await api("/api/admin/specializations");
+    document.getElementById("specs-tbody").replaceChildren(...specs.map(specRow));
+  } catch (e) {
+    toast(e.detail || "Не удалось загрузить специализации", true);
+  }
+}
+
+async function saveSpec(id, body) {
+  if (!body.name) { toast("Название не может быть пустым", true); return; }
+  try {
+    if (id) await api(`/api/admin/specializations/${id}`, { method: "PUT", body });
+    else await api("/api/admin/specializations", { method: "POST", body });
+    toast("Специализация сохранена");
+    loadSpecs();
+  } catch (e) {
+    toast(e.detail, true);
+  }
+}
+
+async function deleteSpec(id, name) {
+  if (!confirm(`Удалить специализацию «${name}»?`)) return;
+  try {
+    await api(`/api/admin/specializations/${id}`, { method: "DELETE" });
+    toast("Специализация удалена");
+    loadSpecs();
+  } catch (e) {
+    toast(e.detail, true);
+  }
+}
+
+async function loadExamplesAdmin() {
+  try {
+    const examples = await api("/api/admin/examples");
+    document.getElementById("examples-text").value = examples.map((e) => e.text).join("\n");
+  } catch { /* необязательно */ }
+}
+
+async function saveExamples() {
+  const items = document.getElementById("examples-text").value.split("\n");
+  try {
+    const r = await api("/api/admin/examples", { method: "PUT", body: { items } });
+    toast(`Сохранено примеров: ${r.count}`);
+  } catch (e) {
+    toast(e.detail, true);
+  }
+}
+
+async function exportFeedback() {
+  try {
+    const r = await fetch("/api/admin/feedback/export");
+    if (!r.ok) throw new Error();
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "feedback.jsonl";
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast("Не удалось выгрузить обратную связь", true);
+  }
+}
+
+// --- Профиль: масштаб шрифта и смена пароля ---
+
+function applyFontScale(scale) {
+  document.documentElement.dataset.fontScale = String(scale);
+  document.querySelectorAll("#font-scale button").forEach((b) => {
+    b.classList.toggle("active", Number(b.dataset.scale) === scale);
+  });
+}
+
+async function setFontScale(scale) {
+  try {
+    await api("/api/me/settings", { method: "POST", body: { font_scale: scale } });
+    currentUser.font_scale = scale;
+    applyFontScale(scale);
+  } catch (e) {
+    toast(e.detail || "Не удалось сохранить настройку", true);
+  }
+}
+
+async function changePassword(e) {
+  e.preventDefault();
+  const cur = document.getElementById("cur-password").value;
+  const next = document.getElementById("new-password2").value;
+  try {
+    await api("/api/me/password", { method: "POST",
+      body: { current_password: cur, new_password: next } });
+    toast("Пароль изменён");
+    e.target.reset();
+  } catch (err) {
+    toast(err.detail, true);
+  }
 }
 
 async function setActive(user, isActive) {
@@ -166,8 +399,40 @@ async function init() {
     location.href = "/login";
   });
 
+  // Профиль
+  applyFontScale(currentUser.font_scale ?? 1);
+  const profileModal = document.getElementById("profile-modal");
+  document.getElementById("profile-btn").addEventListener("click", () => {
+    profileModal.hidden = false;
+  });
+  document.getElementById("profile-close-btn").addEventListener("click", () => {
+    profileModal.hidden = true;
+  });
+  profileModal.addEventListener("click", (e) => {
+    if (e.target === profileModal) profileModal.hidden = true;
+  });
+  document.getElementById("font-scale").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-scale]");
+    if (btn) setFontScale(Number(btn.dataset.scale));
+  });
+  document.getElementById("password-form").addEventListener("submit", changePassword);
+
+  // Администрирование: примеры и выгрузка
   document.getElementById("create-user-form").addEventListener("submit", createUser);
+  document.getElementById("spec-add-btn").addEventListener("click", () =>
+    saveSpec(null, { name: "Новая специализация", system_prompt: "", is_active: true, sort_order: 0 }));
+  document.getElementById("examples-save-btn").addEventListener("click", saveExamples);
+  document.getElementById("feedback-export-btn").addEventListener("click", exportFeedback);
+  document.getElementById("audit-refresh").addEventListener("click", () => { auditOffset = 0; loadAudit(); });
+  document.getElementById("audit-action").addEventListener("change", () => { auditOffset = 0; loadAudit(); });
+  document.getElementById("audit-prev").addEventListener("click", () => {
+    auditOffset = Math.max(0, auditOffset - AUDIT_LIMIT); loadAudit();
+  });
+  document.getElementById("audit-next").addEventListener("click", () => {
+    auditOffset += AUDIT_LIMIT; loadAudit();
+  });
   initChat(toast);
+  setRagAvailable(Boolean(currentUser.rag_enabled));
   initNotes(toast);
   initCalendar(toast);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));

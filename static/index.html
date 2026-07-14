@@ -26,6 +26,7 @@
         <h2 id="page-title">Чат</h2>
         <div class="user">
           <span><b id="user-name"></b></span>
+          <button class="btn btn-small" id="profile-btn">Профиль</button>
           <button class="btn btn-small" id="logout-btn">Выйти</button>
         </div>
       </header>
@@ -34,7 +35,10 @@
         <section id="section-chat" hidden>
           <div class="chat-layout">
             <aside class="chat-sidebar">
-              <button type="button" class="btn btn-primary chat-new" id="chat-new-btn">Новый чат</button>
+              <div class="chat-new-row">
+                <select id="chat-spec" title="Режим (специализация) нового чата"></select>
+                <button type="button" class="btn btn-primary chat-new" id="chat-new-btn">Новый чат</button>
+              </div>
               <ul class="chat-list" id="chat-list"></ul>
             </aside>
             <div class="chat-main">
@@ -42,19 +46,31 @@
                 <label class="ctx-toggle" title="Разрешить модели работать с вашими заметками и календарём">
                   <input type="checkbox" id="ctx-tools" checked> Заметки/Календарь
                 </label>
+                <label class="ctx-toggle" id="ctx-rag-label" hidden
+                       title="Перед ответом искать контекст в базе знаний (LightRAG)">
+                  <input type="checkbox" id="ctx-rag"> База знаний
+                </label>
               </div>
               <div class="chat-messages" id="chat-messages"></div>
               <div class="chat-empty" id="chat-empty">
-                <div class="display">Нет чатов</div>
-                <p>Создайте новый чат, чтобы начать работу с моделью.</p>
+                <div class="display">Начните работу</div>
+                <p>Создайте новый чат или выберите пример запроса.</p>
+                <div class="chat-examples" id="chat-examples"></div>
               </div>
               <form class="chat-input-row" id="chat-form" hidden>
-                <textarea id="chat-input" rows="3"
-                  placeholder="Введите запрос… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
-                <div class="chat-input-actions">
-                  <button type="submit" class="btn btn-primary" id="chat-send-btn">Отправить</button>
-                  <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
+                <div class="chat-attachments" id="chat-attachments" hidden></div>
+                <div class="chat-input-main">
+                  <textarea id="chat-input" rows="3"
+                    placeholder="Введите запрос… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+                  <div class="chat-input-actions">
+                    <button type="submit" class="btn btn-primary" id="chat-send-btn">Отправить</button>
+                    <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
+                    <button type="button" class="btn" id="chat-attach-btn"
+                      title="Прикрепить файл (txt, md, csv, docx, xlsx, pdf, png, jpg)">📎 Файл</button>
+                  </div>
                 </div>
+                <input type="file" id="chat-file" hidden
+                  accept=".txt,.md,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg">
               </form>
               <div class="chat-disclaimer">Ответ ИИ носит рекомендательный характер и требует проверки специалистом</div>
             </div>
@@ -246,8 +262,89 @@
               </div>
             </form>
           </div>
+
+          <h3 class="section-title mt-32">Специализации (режимы чата)</h3>
+          <table class="users">
+            <thead>
+              <tr><th>Порядок</th><th>Название</th><th>Системный промпт</th><th>Активна</th><th></th></tr>
+            </thead>
+            <tbody id="specs-tbody"></tbody>
+          </table>
+          <div class="mt-18">
+            <button type="button" class="btn" id="spec-add-btn">Добавить специализацию</button>
+          </div>
+
+          <h3 class="section-title mt-32">Примеры запросов в пустом чате</h3>
+          <div class="card card-narrow">
+            <p class="hint">По одному примеру на строку.</p>
+            <textarea id="examples-text" rows="5"></textarea>
+            <div class="mt-18">
+              <button type="button" class="btn btn-primary" id="examples-save-btn">Сохранить примеры</button>
+            </div>
+          </div>
+
+          <h3 class="section-title mt-32">Обратная связь</h3>
+          <div class="card card-narrow">
+            <p class="hint">Выгрузка оценок ответов модели (задел под датасет LoRA).</p>
+            <button type="button" class="btn" id="feedback-export-btn">Скачать feedback.jsonl</button>
+          </div>
+
+          <h3 class="section-title mt-32">Метрики</h3>
+          <div class="metrics-grid" id="metrics-grid"></div>
+
+          <h3 class="section-title mt-32">Журнал аудита</h3>
+          <div class="audit-controls">
+            <select id="audit-action">
+              <option value="">Все действия</option>
+              <option value="login">Вход</option>
+              <option value="login_failed">Неудачный вход</option>
+              <option value="logout">Выход</option>
+              <option value="user_created">Создание пользователя</option>
+              <option value="user_blocked">Блокировка пользователя</option>
+              <option value="llm_tool_call">Вызов инструмента LLM</option>
+              <option value="note_deleted">Удаление заметки</option>
+              <option value="event_deleted">Удаление события</option>
+            </select>
+            <button type="button" class="btn btn-small" id="audit-refresh">Обновить</button>
+            <span class="audit-total" id="audit-total"></span>
+          </div>
+          <table class="users audit-table">
+            <thead>
+              <tr><th>Время</th><th>Пользователь</th><th>Действие</th><th>Объект</th><th>Детали</th><th>IP</th></tr>
+            </thead>
+            <tbody id="audit-tbody"></tbody>
+          </table>
+          <div class="audit-pager">
+            <button type="button" class="btn btn-small" id="audit-prev">‹ Назад</button>
+            <button type="button" class="btn btn-small" id="audit-next">Вперёд ›</button>
+          </div>
         </section>
       </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="profile-modal" hidden>
+    <div class="modal">
+      <h3>Профиль</h3>
+
+      <label>Размер шрифта</label>
+      <div class="font-scale" id="font-scale">
+        <button type="button" class="btn btn-small" data-scale="0">Мелкий</button>
+        <button type="button" class="btn btn-small" data-scale="1">Обычный</button>
+        <button type="button" class="btn btn-small" data-scale="2">Крупный</button>
+      </div>
+
+      <h3 class="mt-32">Смена пароля</h3>
+      <form id="password-form">
+        <label for="cur-password">Текущий пароль</label>
+        <input type="password" id="cur-password" autocomplete="current-password">
+        <label for="new-password2">Новый пароль (мин. 10 символов)</label>
+        <input type="password" id="new-password2" minlength="10" autocomplete="new-password">
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Сменить пароль</button>
+          <button type="button" class="btn" id="profile-close-btn">Закрыть</button>
+        </div>
+      </form>
     </div>
   </div>
 

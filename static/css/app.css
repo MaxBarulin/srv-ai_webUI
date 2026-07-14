@@ -469,12 +469,115 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .tool-chip.confirm { border-left-color: var(--osk-red); }
 .tool-chip .tool-confirm-btn { flex-shrink: 0; }
 
+/* Очередь к модели (§15) */
+.queue-note { text-align: center; color: var(--osk-slate); }
+
+/* Создание чата со специализацией (§15) */
+.chat-new-row { padding: 16px 16px 10px; display: flex; flex-direction: column; gap: 8px; }
+.chat-new-row .chat-new { margin: 0; }
+#chat-spec { font-size: 13px; padding: 7px 10px; }
+#chat-spec[hidden] { display: none; }
+
+/* Примеры запросов в пустом чате (§15) */
+.chat-examples { margin-top: 20px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.example-chip {
+  max-width: 520px;
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  border-left: 3px solid var(--osk-red);
+  font-size: 13.5px;
+  color: var(--osk-dark);
+  cursor: pointer;
+  font-family: var(--font-text);
+}
+.example-chip:hover { background: var(--osk-bg); }
+
+/* Обратная связь 👍/👎 (§15) */
+.feedback-bar { max-width: 860px; margin: 4px auto 0; display: flex; gap: 6px; }
+.fb-btn {
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 9px;
+  opacity: 0.55;
+}
+.fb-btn:hover { opacity: 1; }
+.fb-btn.active { opacity: 1; border-color: var(--osk-red); background: var(--osk-bg); }
+
+/* Кнопка «Копировать для Excel» у таблиц (§15) */
+.table-wrap { position: relative; overflow-x: auto; }
+.table-excel {
+  position: absolute;
+  top: 4px; right: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  color: var(--osk-slate);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.table-wrap:hover .table-excel { opacity: 1; }
+.table-excel:hover { border-color: var(--osk-red); color: var(--osk-red); }
+
+/* Профиль: масштаб шрифта (§15) */
+.font-scale { display: flex; gap: 6px; }
+.font-scale button.active { border-color: var(--osk-red); color: var(--osk-red); }
+.hint { font-size: 12.5px; color: var(--osk-slate); margin: 0 0 10px; }
+#examples-text {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--osk-line);
+  font-family: var(--font-text);
+  font-size: 14px;
+  resize: vertical;
+}
+#specs-tbody textarea, #specs-tbody input[type="text"], #specs-tbody input[type="number"] {
+  font-size: 13px;
+  padding: 5px 8px;
+}
+#specs-tbody textarea { width: 100%; font-family: var(--font-text); resize: vertical; }
+
+/* Три ступени масштаба шрифта — применяются к корню (§15) */
+:root[data-font-scale="0"] { font-size: 14px; }
+:root[data-font-scale="1"] { font-size: 16px; }
+:root[data-font-scale="2"] { font-size: 18px; }
+
+/* Плашка фильтра ПДн (§13) */
+.pii-note { color: var(--osk-red-dark); font-style: normal; }
+
+/* Метрики (§13) */
+.metrics-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.metric-tile {
+  min-width: 150px;
+  padding: 16px 20px;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  border-top: 3px solid var(--osk-red);
+}
+.metric-value { font-size: 26px; font-weight: 700; color: var(--osk-dark); }
+.metric-label { margin-top: 4px; font-size: 12px; color: var(--osk-slate); }
+
+/* Журнал аудита (§13) */
+.audit-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.audit-controls select { width: auto; font-size: 13px; padding: 6px 10px; }
+.audit-total { font-size: 12.5px; color: var(--osk-slate); }
+.audit-table { font-size: 12.5px; }
+.audit-table td { vertical-align: top; }
+.audit-pager { display: flex; gap: 8px; margin-top: 12px; }
+
 /* Размышления (reasoning) */
 .reasoning {
   margin-bottom: 6px;
   border-left: 3px solid var(--osk-line);
   background: transparent;
 }
+.reasoning.sources { border-left-color: var(--osk-red); }
 .reasoning summary {
   cursor: pointer;
   padding: 4px 10px;
@@ -551,13 +654,14 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 /* Поле ввода */
 .chat-input-row {
   display: flex;
-  gap: 12px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
   padding: 14px 28px 6px;
   border-top: 1px solid var(--osk-line);
   background: var(--osk-paper);
 }
 .chat-input-row[hidden] { display: none; }
+.chat-input-main { display: flex; gap: 12px; align-items: flex-end; }
 .chat-input-row textarea {
   flex: 1;
   resize: none;
@@ -569,6 +673,32 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .chat-input-row textarea:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; }
 .chat-input-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* Вложения (§16) */
+.chat-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-attachments[hidden] { display: none; }
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--osk-bg);
+  border: 1px solid var(--osk-line);
+  border-left: 3px solid var(--osk-red);
+  font-size: 12.5px;
+  color: var(--osk-dark);
+  max-width: 260px;
+}
+.attach-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--osk-slate);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.attach-remove:hover { color: var(--osk-red); }
 .chat-disclaimer {
   padding: 4px 28px 10px;
   background: var(--osk-paper);

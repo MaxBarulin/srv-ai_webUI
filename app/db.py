@@ -91,13 +91,96 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+-- §15: библиотека специализаций (системные промпты, редактируются админом)
+CREATE TABLE IF NOT EXISTS specializations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- §15: обратная связь по ответам модели (задел под датасет LoRA)
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES messages(id),
+    chat_id INTEGER NOT NULL REFERENCES chats(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    rating INTEGER NOT NULL,
+    comment TEXT,
+    specialization TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_message ON feedback(message_id);
+
+-- §15: кликабельные примеры запросов в пустом чате (редактируются админом)
+CREATE TABLE IF NOT EXISTS chat_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
 """
+
+# Миграции для существующих БД: добавление колонок (ALTER не поддерживает IF NOT EXISTS).
+_COLUMN_MIGRATIONS = [
+    ("chats", "specialization_id", "INTEGER"),
+    ("users", "font_scale", "INTEGER NOT NULL DEFAULT 1"),
+]
+
+DEFAULT_SPECIALIZATIONS = [
+    ("Общий", ""),
+    ("Механообработка",
+     "Ты — инженер-технолог по механообработке. Помогай с режимами резания, "
+     "нормированием операций, выбором инструмента и приспособлений."),
+    ("Сварка",
+     "Ты — инженер-технолог по сварочному производству. Помогай с выбором способов "
+     "сварки, режимов, контроля качества сварных соединений и нормативной документации."),
+    ("Литьё",
+     "Ты — инженер-технолог литейного производства. Помогай с технологией литья, "
+     "выбором сплавов, расчётом литниковых систем и устранением дефектов отливок."),
+]
+
+DEFAULT_EXAMPLES = [
+    "Создай на завтра на 10:00 совещание по нормированию и заметку с повесткой",
+    "Что у меня запланировано на этой неделе?",
+    "Составь чек-лист входного контроля материалов",
+    "Найди мои заметки по теме сварки",
+]
+
+
+async def _run_column_migrations(db: aiosqlite.Connection) -> None:
+    for table, column, decl in _COLUMN_MIGRATIONS:
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if column not in columns:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+async def _seed_defaults(db: aiosqlite.Connection) -> None:
+    from app.audit import utcnow_iso
+    cursor = await db.execute("SELECT COUNT(*) FROM specializations")
+    if (await cursor.fetchone())[0] == 0:
+        now = utcnow_iso()
+        for order, (name, prompt) in enumerate(DEFAULT_SPECIALIZATIONS):
+            await db.execute(
+                "INSERT INTO specializations (name, system_prompt, is_active, sort_order, created_at) "
+                "VALUES (?, ?, 1, ?, ?)", (name, prompt, order, now))
+    cursor = await db.execute("SELECT COUNT(*) FROM chat_examples")
+    if (await cursor.fetchone())[0] == 0:
+        for order, text in enumerate(DEFAULT_EXAMPLES):
+            await db.execute(
+                "INSERT INTO chat_examples (text, sort_order) VALUES (?, ?)", (text, order))
 
 
 async def init_db() -> None:
     async with aiosqlite.connect(settings.db_path) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
+        await _run_column_migrations(db)
+        await _seed_defaults(db)
         await db.commit()
 
 
