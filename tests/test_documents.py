@@ -130,8 +130,7 @@ def _png_bytes(color=(255, 0, 0), size=(10, 10)) -> bytes:
     return buf.getvalue()
 
 
-def test_parse_image_vision_enabled(monkeypatch):
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=True))
+def test_parse_image_vision_path():
     doc = parse_upload("photo.png", "image/png", _png_bytes())
     assert len(doc.images) == 1
     assert doc.images[0].startswith("data:image/png;base64,")
@@ -147,7 +146,6 @@ def test_reject_corrupt_image():
 
 
 def test_large_image_downscaled(monkeypatch):
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=True))
     monkeypatch.setattr(documents, "IMAGE_MAX_DIM", 100)
     from PIL import Image
     doc = parse_upload("big.png", "image/png", _png_bytes(size=(500, 300)))
@@ -174,7 +172,7 @@ def _pdf_with_text(text: str) -> bytes:
 def test_pdf_scan_vision_path(monkeypatch):
     # PDF без текстового слоя → растеризация → изображения (vision)
     monkeypatch.setattr(documents, "settings",
-                        replace(settings, vision_enabled=True, vision_max_pages=10))
+                        replace(settings, vision_max_pages=10))
     monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
     monkeypatch.setattr(documents, "_pdf_rasterize",
                         lambda data, max_pages: [_png_bytes(), _png_bytes()])
@@ -185,7 +183,7 @@ def test_pdf_scan_vision_path(monkeypatch):
 
 def test_pdf_scan_page_limit(monkeypatch):
     monkeypatch.setattr(documents, "settings",
-                        replace(settings, vision_enabled=True, vision_max_pages=2))
+                        replace(settings, vision_max_pages=2))
     monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
     monkeypatch.setattr(documents, "_pdf_rasterize",
                         lambda data, max_pages: [_png_bytes() for _ in range(5)])
@@ -205,17 +203,6 @@ def test_pdf_text_layer_preferred(monkeypatch):
     assert called["raster"] is False  # растеризация не вызывалась
 
 
-def test_pdf_scan_rejected_when_vision_disabled(monkeypatch):
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=False))
-    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
-    with pytest.raises(DocumentError, match="VISION_ENABLED"):
-        parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
-
-
-def test_image_rejected_when_vision_disabled(monkeypatch):
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=False))
-    with pytest.raises(DocumentError, match="отключена"):
-        parse_upload("photo.png", "image/png", _png_bytes())
 
 
 # --- Endpoint загрузки ---

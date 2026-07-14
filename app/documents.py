@@ -11,7 +11,6 @@
   растеризация pdftoppm и передача модели как изображения (vision, mmproj).
 
 Изображения и сканы распознаёт сама мультимодальная модель (llama.cpp с mmproj).
-При VISION_ENABLED=false обработка изображений/сканов отключается.
 """
 from __future__ import annotations
 
@@ -235,10 +234,6 @@ def _parse_pdf(data: bytes, doc: ParsedDocument) -> None:
         doc.text = text
         return
     # Текстового слоя нет — скан. Распознаёт сама мультимодальная модель (vision).
-    if not settings.vision_enabled:
-        raise DocumentError(
-            "PDF без текстового слоя (скан): обработка изображений отключена "
-            "(VISION_ENABLED=false)")
     max_pages = settings.vision_max_pages
     images = _pdf_rasterize(data, max_pages + 1)
     if len(images) > max_pages:
@@ -265,8 +260,6 @@ def parse_upload(filename: str, content_type: str, data: bytes) -> ParsedDocumen
     elif ext == ".xlsx":
         doc.text, doc.warnings = _parse_xlsx(data)
     elif ext in (".png", ".jpg", ".jpeg"):
-        if not settings.vision_enabled:
-            raise DocumentError("Обработка изображений отключена (VISION_ENABLED=false)")
         doc.images = [_image_to_data_url(data)]
     elif ext == ".pdf":
         _parse_pdf(data, doc)
