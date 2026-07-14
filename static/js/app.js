@@ -1,6 +1,7 @@
 // Каркас SPA: навигация по разделам, текущий пользователь, раздел «Администрирование».
 import { api } from "/static/js/api.js";
 import { initChat } from "/static/js/chat.js";
+import { initNotes } from "/static/js/notes.js";
 
 const SECTIONS = {
   chat: "Чат",
@@ -35,7 +36,7 @@ function showSection(name) {
     a.classList.toggle("active", a.dataset.section === name);
   });
   document.getElementById("page-title").textContent = SECTIONS[name];
-  document.querySelector(".content").classList.toggle("content-chat", name === "chat");
+  document.querySelector(".content").classList.toggle("content-full", name !== "admin");
   if (name === "admin") loadUsers();
   window.dispatchEvent(new CustomEvent("section-shown", { detail: name }));
 }
@@ -166,6 +167,7 @@ async function init() {
 
   document.getElementById("create-user-form").addEventListener("submit", createUser);
   initChat(toast);
+  initNotes(toast);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));
   showSection(currentSectionFromHash());
 }

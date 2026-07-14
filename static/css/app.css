@@ -317,13 +317,18 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 
 /* ===== Чат ===== */
 #section-chat { height: 100%; }
-.content.content-chat {
+.content.content-full {
   padding: 0;
   display: flex;
   height: calc(100vh - 56px);
   overflow: hidden;
 }
-.content.content-chat > #section-chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.content.content-full > section:not([hidden]) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 .chat-layout {
   display: grid;
@@ -538,9 +543,150 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   text-align: center;
 }
 
+/* ===== Заметки ===== */
+.notes-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+.notes-sidebar {
+  border-right: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notes-new { margin: 16px 16px 10px; }
+.notes-filters {
+  padding: 0 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--osk-line);
+}
+.notes-filters input, .notes-filters select { font-size: 14px; padding: 7px 10px; }
+
+.notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.note-item {
+  position: relative;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--osk-line);
+  cursor: pointer;
+}
+.note-item:hover { background: var(--osk-bg); }
+.note-item.active { background: var(--osk-bg); }
+.note-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--osk-red);
+}
+.note-item-title {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-item-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--osk-slate);
+}
+.note-item-tags { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge.shared { border-color: var(--osk-red); color: var(--osk-red); }
+
+.notes-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+.notes-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--osk-slate);
+}
+
+.note-view { max-width: 900px; }
+.note-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.note-view-head h3 { margin: 0; font-size: 20px; }
+.note-view-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.note-meta { margin-top: 8px; font-size: 12.5px; color: var(--osk-slate); }
+.note-tags { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.note-body {
+  margin-top: 16px;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  padding: 6px 20px;
+}
+
+.note-editor {
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.note-editor input[type="text"], .note-editor select { background: var(--osk-paper); }
+#note-edit-title { font-size: 17px; font-weight: 700; }
+.note-editor-row { display: flex; gap: 10px; }
+.note-editor-row input { flex: 1; }
+.note-editor-row select { width: 160px; }
+.note-editor textarea {
+  min-height: 380px;
+  padding: 12px 14px;
+  border: 1px solid var(--osk-line);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.note-editor textarea:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; }
+.note-preview {
+  min-height: 380px;
+  background: var(--osk-paper);
+  border: 1px solid var(--osk-line);
+  padding: 6px 20px;
+}
+.note-editor-tabs { display: flex; gap: 2px; }
+.tab {
+  border: 1px solid var(--osk-line);
+  border-bottom: 0;
+  background: var(--osk-bg);
+  padding: 6px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--osk-slate);
+}
+.tab.active {
+  background: var(--osk-paper);
+  color: var(--osk-dark);
+  border-top: 2px solid var(--osk-red);
+}
+.note-editor-actions { display: flex; gap: 10px; }
+
 @media (max-width: 1100px) {
   .chat-layout { grid-template-columns: 210px 1fr; }
   .msg-user .msg-body { margin-left: 8%; }
+  .notes-layout { grid-template-columns: 250px 1fr; }
 }
 
 .toast {

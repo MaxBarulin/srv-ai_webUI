@@ -57,9 +57,61 @@
         </section>
 
         <section id="section-notes" hidden>
-          <div class="placeholder">
-            <div class="display">Заметки — в разработке</div>
-            <p>Раздел появится на этапе 3.</p>
+          <div class="notes-layout">
+            <aside class="notes-sidebar">
+              <button type="button" class="btn btn-primary notes-new" id="note-new-btn">Новая заметка</button>
+              <div class="notes-filters">
+                <input type="text" id="notes-search" placeholder="Поиск…">
+                <input type="text" id="notes-tags" placeholder="Тэги через запятую">
+                <select id="notes-scope">
+                  <option value="all" selected>Все заметки</option>
+                  <option value="personal">Личные</option>
+                  <option value="shared">Общие</option>
+                </select>
+              </div>
+              <ul class="notes-list" id="notes-list"></ul>
+            </aside>
+
+            <div class="notes-main">
+              <div class="notes-empty" id="note-empty">
+                <div class="display">Заметка не выбрана</div>
+                <p>Выберите заметку из списка или создайте новую.</p>
+              </div>
+
+              <article class="note-view" id="note-view" hidden>
+                <div class="note-view-head">
+                  <h3 id="note-view-title"></h3>
+                  <div class="note-view-actions">
+                    <button type="button" class="btn btn-small" id="note-edit-btn">Редактировать</button>
+                    <button type="button" class="btn btn-small" id="note-delete-btn">Удалить</button>
+                  </div>
+                </div>
+                <div class="note-meta" id="note-view-meta"></div>
+                <div class="note-tags" id="note-view-tags"></div>
+                <div class="msg-body note-body" id="note-view-body"></div>
+              </article>
+
+              <form class="note-editor" id="note-editor" hidden>
+                <input type="text" id="note-edit-title" placeholder="Заголовок">
+                <div class="note-editor-row">
+                  <input type="text" id="note-edit-tags" placeholder="Тэги через запятую">
+                  <select id="note-edit-scope">
+                    <option value="personal" selected>Личная</option>
+                    <option value="shared">Общая</option>
+                  </select>
+                </div>
+                <div class="note-editor-tabs">
+                  <button type="button" class="tab active" id="note-tab-edit">Текст</button>
+                  <button type="button" class="tab" id="note-tab-preview">Предпросмотр</button>
+                </div>
+                <textarea id="note-edit-body" placeholder="Текст заметки (markdown)"></textarea>
+                <div class="msg-body note-preview" id="note-edit-preview" hidden></div>
+                <div class="note-editor-actions">
+                  <button type="submit" class="btn btn-primary">Сохранить</button>
+                  <button type="button" class="btn" id="note-cancel-btn">Отмена</button>
+                </div>
+              </form>
+            </div>
           </div>
         </section>
 
