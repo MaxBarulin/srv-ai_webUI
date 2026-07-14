@@ -51,10 +51,13 @@ uvicorn app.main:app --reload --port 8080
 адреса LLM и LightRAG, TTL сессий, подтверждение деструктивных действий, лимиты
 загрузки и vision, фильтр ПДн.
 
-## Развёртывание
+## Инструкции (пошаговые)
 
-Инструкция для системного администратора (онлайн и офлайн-варианты, systemd,
-firewall, бэкап) — в [deploy/README-deploy.md](deploy/README-deploy.md).
+- [Быстрый локальный тест на Windows](docs/local-test-quick.md) — минимум, без фильтра ПДн.
+- [Полный локальный тест на Windows](docs/local-test-full.md) — со всеми функциями.
+- [Развёртывание на сервер](deploy/README-deploy.md) — для сисадмина (systemd, firewall, офлайн).
+
+Обзор всех трёх — в [docs/README.md](docs/README.md).
 
 ## Тесты
 

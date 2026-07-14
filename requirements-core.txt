@@ -1,0 +1,14 @@
+# Облегчённый набор зависимостей для БЫСТРОГО локального теста (без фильтра ПДн).
+# Фильтр персональных данных (natasha/slovnet/navec) сюда НЕ входит — при
+# PII_FILTER=false он не нужен и не импортируется.
+# Полный набор — в requirements.txt.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+bcrypt==4.2.1
+python-multipart==0.0.20
+aiosqlite==0.20.0
+python-docx==1.2.0
+openpyxl==3.1.5
+pypdf==6.14.2
+Pillow==12.3.0
