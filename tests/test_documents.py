@@ -205,14 +205,17 @@ def test_pdf_text_layer_preferred(monkeypatch):
     assert called["raster"] is False  # растеризация не вызывалась
 
 
-def test_pdf_scan_ocr_when_vision_disabled(monkeypatch):
+def test_pdf_scan_rejected_when_vision_disabled(monkeypatch):
     monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=False))
     monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
-    monkeypatch.setattr(documents, "_pdf_rasterize", lambda data, max_pages: [_png_bytes()])
-    monkeypatch.setattr(documents, "_ocr_images", lambda images: "Распознанный текст")
-    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
-    assert doc.text == "Распознанный текст"
-    assert doc.images == []
+    with pytest.raises(DocumentError, match="VISION_ENABLED"):
+        parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
+
+
+def test_image_rejected_when_vision_disabled(monkeypatch):
+    monkeypatch.setattr(documents, "settings", replace(settings, vision_enabled=False))
+    with pytest.raises(DocumentError, match="отключена"):
+        parse_upload("photo.png", "image/png", _png_bytes())
 
 
 # --- Endpoint загрузки ---

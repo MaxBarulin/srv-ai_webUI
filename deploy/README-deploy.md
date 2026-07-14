@@ -20,11 +20,14 @@ sudo -u srv-ai-ui python3 -m venv venv
 sudo -u srv-ai-ui ./venv/bin/pip install --upgrade pip
 sudo -u srv-ai-ui ./venv/bin/pip install -r requirements.txt
 
-# Системные пакеты для парсинга документов (§16):
+# Системный пакет для парсинга PDF-сканов (§16):
 sudo apt-get install -y poppler-utils
-# Опционально, только если планируете VISION_ENABLED=false (OCR-путь):
-sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
 ```
+
+Изображения и PDF-сканы распознаёт сама мультимодальная модель (llama.cpp с
+mmproj) — растеризованные страницы передаются ей напрямую. `poppler-utils`
+(`pdftoppm`) нужен только чтобы превратить PDF-скан в изображения для этой
+передачи.
 
 ## Вариант B. Офлайн-установка (закрытый контур, air-gap) — обязательна
 
@@ -48,8 +51,8 @@ sudo -u srv-ai-ui python3 -m venv venv
 sudo -u srv-ai-ui ./venv/bin/pip install --no-index --find-links wheels/ -r requirements.txt
 ```
 
-Системные пакеты (`poppler-utils`, при необходимости `tesseract-ocr-rus`)
-заранее скачать в виде `.deb` и установить `dpkg -i`.
+Системный пакет `poppler-utils` заранее скачать в виде `.deb` и установить
+`dpkg -i`.
 
 ---
 

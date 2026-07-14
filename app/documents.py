@@ -8,8 +8,10 @@
 - docx — защита от zip-бомб (лимит суммарного распакованного размера);
 - изображения перекодируются через Pillow (отсечение метаданных/полиглотов);
 - PDF: приоритет — текстовый слой (pypdf), дешевле по токенам; скан —
-  растеризация pdftoppm и передача модели как изображения (при VISION_ENABLED),
-  иначе OCR через tesseract.
+  растеризация pdftoppm и передача модели как изображения (vision, mmproj).
+
+Изображения и сканы распознаёт сама мультимодальная модель (llama.cpp с mmproj).
+При VISION_ENABLED=false обработка изображений/сканов отключается.
 """
 from __future__ import annotations
 
@@ -227,35 +229,16 @@ def _pdf_rasterize(data: bytes, max_pages: int) -> list[bytes]:
         return [p.read_bytes() for p in pages]
 
 
-def _ocr_images(images: list[bytes]) -> str:
-    """OCR-fallback через tesseract (rus+eng), если vision выключен."""
-    texts = []
-    for idx, img in enumerate(images):
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "page.png"
-            src.write_bytes(img)
-            try:
-                result = subprocess.run(
-                    ["tesseract", str(src), "stdout", "-l", "rus+eng"],
-                    check=True, capture_output=True, timeout=120, text=True)
-            except FileNotFoundError:
-                raise DocumentError(
-                    "OCR недоступен: не установлен tesseract-ocr. Включите VISION_ENABLED "
-                    "или установите tesseract-ocr-rus")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                raise DocumentError(f"Ошибка OCR: {exc}")
-            page_text = result.stdout.strip()
-            if page_text:
-                texts.append(f"[Страница {idx + 1}]\n{page_text}")
-    return "\n\n".join(texts)
-
-
 def _parse_pdf(data: bytes, doc: ParsedDocument) -> None:
     text = _pdf_text(data)
     if text:
         doc.text = text
         return
-    # Текстового слоя нет — скан
+    # Текстового слоя нет — скан. Распознаёт сама мультимодальная модель (vision).
+    if not settings.vision_enabled:
+        raise DocumentError(
+            "PDF без текстового слоя (скан): обработка изображений отключена "
+            "(VISION_ENABLED=false)")
     max_pages = settings.vision_max_pages
     images = _pdf_rasterize(data, max_pages + 1)
     if len(images) > max_pages:
@@ -264,13 +247,7 @@ def _parse_pdf(data: bytes, doc: ParsedDocument) -> None:
             f"PDF обрезан до {max_pages} страниц (лимит vision), остальное не обработано")
     if not images:
         raise DocumentError("PDF не содержит ни текста, ни страниц для распознавания")
-    if settings.vision_enabled:
-        doc.images = [_image_to_data_url(img) for img in images]
-    else:
-        ocr_text = _ocr_images(images)
-        if not ocr_text:
-            raise DocumentError("OCR не распознал текст на страницах PDF")
-        doc.text = ocr_text
+    doc.images = [_image_to_data_url(img) for img in images]
 
 
 # --- Точка входа ---
@@ -289,11 +266,8 @@ def parse_upload(filename: str, content_type: str, data: bytes) -> ParsedDocumen
         doc.text, doc.warnings = _parse_xlsx(data)
     elif ext in (".png", ".jpg", ".jpeg"):
         if not settings.vision_enabled:
-            doc.text = _ocr_images([data])
-            if not doc.text:
-                doc.warnings.append("OCR не распознал текст на изображении")
-        else:
-            doc.images = [_image_to_data_url(data)]
+            raise DocumentError("Обработка изображений отключена (VISION_ENABLED=false)")
+        doc.images = [_image_to_data_url(data)]
     elif ext == ".pdf":
         _parse_pdf(data, doc)
 

@@ -13,6 +13,5 @@ Pillow==12.3.0
 natasha==1.6.0
 slovnet==0.6.0
 navec==0.10.0
-# системные зависимости (устанавливаются отдельно, см. deploy):
-#   poppler-utils (pdftoppm) — растеризация PDF-сканов
-#   опционально tesseract-ocr + tesseract-ocr-rus — OCR-fallback при VISION_ENABLED=false
+# системная зависимость (устанавливается отдельно, см. deploy):
+#   poppler-utils (pdftoppm) — растеризация PDF-сканов для передачи vision-модели
