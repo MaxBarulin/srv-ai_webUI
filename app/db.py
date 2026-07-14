@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS chat_examples (
 # Миграции для существующих БД: добавление колонок (ALTER не поддерживает IF NOT EXISTS).
 _COLUMN_MIGRATIONS = [
     ("chats", "specialization_id", "INTEGER"),
+    ("chats", "custom_prompt", "TEXT NOT NULL DEFAULT ''"),
     ("users", "font_scale", "INTEGER NOT NULL DEFAULT 1"),
 ]
 

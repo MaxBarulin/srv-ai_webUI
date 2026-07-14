@@ -6,6 +6,7 @@ let chats = [];
 let activeChatId = null;
 let abortController = null; // не null — идёт генерация
 let pendingAttachments = []; // разобранные вложения для следующего сообщения
+let specializations = [];    // кэш активных специализаций (для селектов)
 
 const els = {};
 
@@ -29,10 +30,21 @@ export function initChat(toast) {
   els.attachBtn = $("chat-attach-btn");
   els.fileInput = $("chat-file");
   els.attachments = $("chat-attachments");
+  els.promptBtn = $("chat-prompt-btn");
+  els.promptModal = $("prompt-modal");
+  els.promptSpec = $("prompt-spec");
+  els.promptCustom = $("prompt-custom");
   els.toast = toast;
 
   els.attachBtn.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", onFileSelected);
+
+  els.promptBtn.addEventListener("click", openPromptModal);
+  $("prompt-save-btn").addEventListener("click", savePromptSettings);
+  $("prompt-cancel-btn").addEventListener("click", () => { els.promptModal.hidden = true; });
+  els.promptModal.addEventListener("click", (e) => {
+    if (e.target === els.promptModal) els.promptModal.hidden = true;
+  });
 
   loadSpecializations();
   loadExamples();
@@ -114,16 +126,61 @@ export function setRagAvailable(available) {
 
 async function loadSpecializations() {
   try {
-    const specs = await api("/api/specializations");
-    els.spec.replaceChildren(...specs.map((s) => {
+    specializations = await api("/api/specializations");
+    els.spec.replaceChildren(...specializations.map((s) => {
       const opt = document.createElement("option");
       opt.value = String(s.id);
       opt.textContent = s.name;
       return opt;
     }));
-    els.spec.hidden = specs.length <= 1;
+    els.spec.hidden = specializations.length <= 1;
   } catch {
     els.spec.hidden = true;
+  }
+}
+
+// --- Режим и системный промпт чата (§15) ---
+
+function activeChat() {
+  return chats.find((c) => c.id === activeChatId) || null;
+}
+
+function updatePromptButton() {
+  const chat = activeChat();
+  els.promptBtn.classList.toggle("has-custom", Boolean(chat && chat.custom_prompt));
+}
+
+function openPromptModal() {
+  const chat = activeChat();
+  if (!chat) return;
+  const options = [{ id: "", name: "Без режима (общий)" },
+                   ...specializations.map((s) => ({ id: String(s.id), name: s.name }))];
+  els.promptSpec.replaceChildren(...options.map((o) => {
+    const opt = document.createElement("option");
+    opt.value = o.id;
+    opt.textContent = o.name;
+    return opt;
+  }));
+  els.promptSpec.value = chat.specialization_id === null ? "" : String(chat.specialization_id);
+  els.promptCustom.value = chat.custom_prompt || "";
+  els.promptModal.hidden = false;
+  els.promptCustom.focus();
+}
+
+async function savePromptSettings() {
+  const chat = activeChat();
+  if (!chat) return;
+  try {
+    const updated = await api(`/api/chats/${chat.id}`, { method: "PUT", body: {
+      specialization_id: els.promptSpec.value === "" ? null : Number(els.promptSpec.value),
+      custom_prompt: els.promptCustom.value,
+    }});
+    Object.assign(chat, updated);
+    els.promptModal.hidden = true;
+    updatePromptButton();
+    els.toast("Настройки чата сохранены — действуют со следующего сообщения");
+  } catch (e) {
+    els.toast(e.detail, true);
   }
 }
 
@@ -275,6 +332,7 @@ async function createChat() {
   if (!els.spec.hidden && els.spec.value) body.specialization_id = Number(els.spec.value);
   const chat = await api("/api/chats", { method: "POST", body });
   activeChatId = chat.id;
+  els.messages.replaceChildren(); // новый чат пуст — убрать сообщения предыдущего
   await refreshChats();
   els.input.focus();
 }
@@ -410,6 +468,7 @@ function updateInputState() {
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
   els.context.hidden = !hasChat;
+  updatePromptButton();
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;
   els.stopBtn.hidden = !streaming;
@@ -567,6 +626,11 @@ async function sendMessage() {
     updateInputState();
     if (!reasoningText && !contentText
         && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip")) live.remove();
+    // Если во время генерации переключались между чатами, живой контейнер был
+    // удалён из DOM — ответ дописывался «в никуда». Перечитываем историю из БД.
+    if (!live.isConnected && activeChatId === chatId) {
+      await loadMessages().catch(() => {});
+    }
     els.input.focus();
   }
 }

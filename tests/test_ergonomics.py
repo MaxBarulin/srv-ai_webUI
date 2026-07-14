@@ -89,6 +89,63 @@ def test_unknown_specialization_falls_back_to_general(client, ergo_user):
     assert chat["specialization_id"] is None
 
 
+def _spy_llm(monkeypatch):
+    captured = []
+    orig = llm_module.stream_chat
+
+    def spy(messages, tools=None):
+        captured.append(messages)
+        return orig(messages, tools=tools)
+
+    monkeypatch.setattr("app.routers.chat.stream_chat", spy)
+    return captured
+
+
+def test_custom_prompt_overrides_specialization(client, ergo_user, monkeypatch):
+    captured = _spy_llm(monkeypatch)
+    specs = client.get("/api/specializations").json()
+    welding = next(s for s in specs if s["name"] == "Сварка")
+
+    chat = client.post("/api/chats", json={
+        "specialization_id": welding["id"],
+        "custom_prompt": "Отвечай только стихами про судостроение.",
+    }).json()
+    assert chat["custom_prompt"] == "Отвечай только стихами про судостроение."
+
+    client.post(f"/api/chats/{chat['id']}/messages",
+                json={"content": "вопрос", "use_tools": False})
+    system_prompt = captured[0][0]["content"]
+    assert "стихами про судостроение" in system_prompt
+    assert "сварочному производству" not in system_prompt  # свой промпт замещает режим
+
+
+def test_chat_prompt_update_and_clear(client, ergo_user, monkeypatch):
+    captured = _spy_llm(monkeypatch)
+    specs = client.get("/api/specializations").json()
+    welding = next(s for s in specs if s["name"] == "Сварка")
+    chat_id = client.post("/api/chats", json={"specialization_id": welding["id"]}).json()["id"]
+
+    # Задать свой промпт через PUT (частичное обновление — title не передаём)
+    r = client.put(f"/api/chats/{chat_id}", json={"custom_prompt": "Ты — аудитор ИБ."})
+    assert r.status_code == 200
+    assert r.json()["custom_prompt"] == "Ты — аудитор ИБ."
+    assert r.json()["title"]  # название не потерялось
+
+    client.post(f"/api/chats/{chat_id}/messages", json={"content": "а", "use_tools": False})
+    assert "аудитор ИБ" in captured[0][0]["content"]
+
+    # Очистить свой промпт — снова действует специализация
+    client.put(f"/api/chats/{chat_id}", json={"custom_prompt": ""})
+    client.post(f"/api/chats/{chat_id}/messages", json={"content": "б", "use_tools": False})
+    assert "сварочному производству" in captured[1][0]["content"]
+
+    # Смена специализации через PUT; несуществующая — 400
+    r = client.put(f"/api/chats/{chat_id}", json={"specialization_id": None})
+    assert r.status_code == 200 and r.json()["specialization_id"] is None
+    assert client.put(f"/api/chats/{chat_id}",
+                      json={"specialization_id": 99999}).status_code == 400
+
+
 def test_admin_specialization_crud(client, ergo_admin):
     created = client.post("/api/admin/specializations",
                           json={"name": "Гальваника", "system_prompt": "Ты — технолог-гальваник."})

@@ -42,10 +42,14 @@ MAX_ATTACHMENT_CHARS = 60000
 class CreateChatRequest(BaseModel):
     title: str = ""
     specialization_id: int | None = None
+    custom_prompt: str = ""  # свой системный промпт чата (§15, замещает режим)
 
 
-class RenameChatRequest(BaseModel):
-    title: str
+class ChatUpdateRequest(BaseModel):
+    """Частичное обновление чата: переданные поля меняются, остальные — нет."""
+    title: str | None = None
+    specialization_id: int | None = None
+    custom_prompt: str | None = None
 
 
 class Attachment(BaseModel):
@@ -63,7 +67,7 @@ class SendMessageRequest(BaseModel):
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, created_at, updated_at "
+        "SELECT id, title, specialization_id, custom_prompt, created_at, updated_at "
         "FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
@@ -79,8 +83,8 @@ async def list_chats(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, created_at, updated_at FROM chats "
-        "WHERE user_id = ? ORDER BY updated_at DESC",
+        "SELECT id, title, specialization_id, custom_prompt, created_at, updated_at FROM chats "
+        "WHERE user_id = ? ORDER BY updated_at DESC, id DESC",
         (user["id"],),
     )
     return [dict(row) for row in await cursor.fetchall()]
@@ -100,30 +104,50 @@ async def create_chat(
             "SELECT id FROM specializations WHERE id = ? AND is_active = 1", (spec_id,))
         if await cursor.fetchone() is None:
             spec_id = None  # неизвестная/выключенная специализация — просто общий режим
+    custom_prompt = payload.custom_prompt.strip()
     cursor = await db.execute(
-        "INSERT INTO chats (user_id, title, specialization_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user["id"], title, spec_id, now, now),
+        "INSERT INTO chats (user_id, title, specialization_id, custom_prompt, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (user["id"], title, spec_id, custom_prompt, now, now),
     )
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
-            "created_at": now, "updated_at": now}
+            "custom_prompt": custom_prompt, "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")
-async def rename_chat(
+async def update_chat(
     chat_id: int,
-    payload: RenameChatRequest,
+    payload: ChatUpdateRequest,
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    await _get_own_chat(db, chat_id, user["id"])
-    title = payload.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Название не может быть пустым")
+    row = await _get_own_chat(db, chat_id, user["id"])
+    provided = payload.model_fields_set
+
+    title = row["title"]
+    if "title" in provided:
+        title = (payload.title or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Название не может быть пустым")
+
+    spec_id = row["specialization_id"]
+    if "specialization_id" in provided:
+        spec_id = payload.specialization_id
+        if spec_id is not None:
+            cursor = await db.execute(
+                "SELECT id FROM specializations WHERE id = ? AND is_active = 1", (spec_id,))
+            if await cursor.fetchone() is None:
+                raise HTTPException(status_code=400, detail="Специализация не найдена")
+
+    custom_prompt = row["custom_prompt"]
+    if "custom_prompt" in provided:
+        custom_prompt = (payload.custom_prompt or "").strip()
+
     await db.execute(
-        "UPDATE chats SET title = ?, updated_at = ? WHERE id = ?",
-        (title, utcnow_iso(), chat_id),
+        "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, updated_at = ? "
+        "WHERE id = ?",
+        (title, spec_id, custom_prompt, utcnow_iso(), chat_id),
     )
     await db.commit()
     return dict(await _get_own_chat(db, chat_id, user["id"]))
@@ -136,6 +160,8 @@ async def delete_chat(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
     await _get_own_chat(db, chat_id, user["id"])
+    # Сначала зависимые записи (FK): оценки → сообщения → чат
+    await db.execute("DELETE FROM feedback WHERE chat_id = ?", (chat_id,))
     await db.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
     await db.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
     await db.commit()
@@ -307,8 +333,9 @@ async def send_message(
     )
     history = [{"role": row["role"], "content": row["content"]} for row in await cursor.fetchall()]
 
-    spec_prompt = ""
-    if chat["specialization_id"] is not None:
+    # Свой промпт чата (§15) имеет приоритет над специализацией
+    spec_prompt = (chat["custom_prompt"] or "").strip()
+    if not spec_prompt and chat["specialization_id"] is not None:
         cursor = await db.execute(
             "SELECT system_prompt FROM specializations WHERE id = ?", (chat["specialization_id"],))
         spec_row = await cursor.fetchone()

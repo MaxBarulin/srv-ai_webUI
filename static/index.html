@@ -50,6 +50,8 @@
                        title="Перед ответом искать контекст в базе знаний (LightRAG)">
                   <input type="checkbox" id="ctx-rag"> База знаний
                 </label>
+                <button type="button" class="btn btn-small ctx-prompt-btn" id="chat-prompt-btn"
+                        title="Режим и системный промпт этого чата">⚙ Промпт</button>
               </div>
               <div class="chat-messages" id="chat-messages"></div>
               <div class="chat-empty" id="chat-empty">
@@ -320,6 +322,25 @@
           </div>
         </section>
       </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="prompt-modal" hidden>
+    <div class="modal">
+      <h3>Режим и промпт чата</h3>
+
+      <label for="prompt-spec">Режим (специализация)</label>
+      <select id="prompt-spec"></select>
+
+      <label for="prompt-custom">Свой системный промпт</label>
+      <textarea id="prompt-custom" rows="6"
+        placeholder="Необязательно. Если заполнено — используется вместо выбранного режима."></textarea>
+      <p class="hint">Свой промпт действует только в этом чате и имеет приоритет над режимом.</p>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="prompt-save-btn">Сохранить</button>
+        <button type="button" class="btn" id="prompt-cancel-btn">Отмена</button>
+      </div>
     </div>
   </div>
 
