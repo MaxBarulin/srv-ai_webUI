@@ -453,8 +453,10 @@ async def send_message(
                                "в интерфейсе. Не вызывай инструмент повторно, сообщи пользователю, "
                                "что ожидается подтверждение.",
                 }
+                # token сохраняется в активности, чтобы кнопка «Подтвердить»
+                # пережила перечитывание истории и перезагрузку страницы
                 return (result, ("tool_confirm", {"token": token, "label": label},
-                                 {"label": label, "status": "confirm"}))
+                                 {"label": label, "status": "confirm", "token": token}))
             result, label = await execute_tool(user, name, args, user_ip)
             return (result, ("tool", {"label": label}, {"label": label, "status": "ok"}))
         except ToolError as exc:

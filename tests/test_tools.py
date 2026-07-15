@@ -173,6 +173,31 @@ def test_destructive_requires_confirmation(client, tool_user):
     assert client.post("/api/tools/confirm", json={"token": token}).status_code == 404
 
 
+def test_confirm_token_persisted_in_history(client, tool_user):
+    """Регресс: токен подтверждения сохраняется в истории, чтобы кнопка
+    «Подтвердить» переживала перечитывание истории и перезагрузку страницы."""
+    _insert_note(tool_user, note_id=1)
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_DELETE_NOTE удали заметку")
+    live_token = _events_of(events, "tool_confirm")[0]["token"]
+
+    # Как после reload: GET истории — плашка подтверждения содержит тот же токен
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    assistant = [m for m in messages if m["role"] == "assistant"][-1]
+    activity = assistant["tool_activity"][0]
+    assert activity["status"] == "confirm"
+    assert activity.get("token") == live_token
+
+    # И этим токеном из истории можно подтвердить действие
+    r = client.post("/api/tools/confirm", json={"token": activity["token"]})
+    assert r.status_code == 200
+    conn = _connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_note_rewrite_is_destructive_but_rename_is_not(client, tool_user):
     _insert_note(tool_user, note_id=1)
     chat_id = _new_chat(client)
