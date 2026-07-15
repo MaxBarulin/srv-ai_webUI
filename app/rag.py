@@ -35,9 +35,15 @@ async def fetch_context(query: str) -> str:
         "mode": settings.rag_mode,
         "only_need_context": True,
     }
+    # RAG_API_KEY опционален: LightRAG с включённой аутентификацией принимает
+    # Bearer-заголовок; сервер без аутентификации его игнорирует.
+    headers = {}
+    if settings.rag_api_key:
+        headers["Authorization"] = f"Bearer {settings.rag_api_key}"
     try:
         async with httpx.AsyncClient(
             base_url=settings.rag_base_url,
+            headers=headers,
             timeout=httpx.Timeout(RAG_TIMEOUT, connect=10),
             transport=_transport,
         ) as client:

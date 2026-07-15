@@ -47,8 +47,15 @@ def build_system_prompt(user_display_name: str, specialization_prompt: str = "")
 
 
 def make_client() -> httpx.AsyncClient:
+    # API-ключ (LLM_API_KEY) опционален: если задан — шлём Bearer-заголовок
+    # (llama.cpp с --api-key, сторонние OpenAI-совместимые провайдеры).
+    # Сервер без аутентификации такой заголовок просто игнорирует.
+    headers = {}
+    if settings.llm_api_key:
+        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
     return httpx.AsyncClient(
         base_url=settings.llm_base_url,
+        headers=headers,
         timeout=httpx.Timeout(settings.llm_timeout, connect=10),
         transport=_transport,
     )

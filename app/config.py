@@ -47,10 +47,12 @@ class Settings:
     app_port: int
     data_dir: Path
     llm_base_url: str
+    llm_api_key: str
     llm_model: str
     llm_timeout: int
     rag_enabled: bool
     rag_base_url: str
+    rag_api_key: str
     rag_mode: str
     session_ttl_hours: int
     tools_confirm_destructive: bool
@@ -73,10 +75,12 @@ def load_settings() -> Settings:
         app_port=_get_int("APP_PORT", 8080),
         data_dir=data_dir,
         llm_base_url=_get("LLM_BASE_URL", "http://127.0.0.1:8000/v1"),
+        llm_api_key=_get("LLM_API_KEY", "").strip(),
         llm_model=_get("LLM_MODEL", "qwen3.6-35b"),
         llm_timeout=_get_int("LLM_TIMEOUT", 600),
         rag_enabled=_get_bool("RAG_ENABLED", True),
         rag_base_url=_get("RAG_BASE_URL", ""),
+        rag_api_key=_get("RAG_API_KEY", "").strip(),
         rag_mode=_get("RAG_MODE", "hybrid"),
         session_ttl_hours=_get_int("SESSION_TTL_HOURS", 12),
         tools_confirm_destructive=_get_bool("TOOLS_CONFIRM_DESTRUCTIVE", True),
