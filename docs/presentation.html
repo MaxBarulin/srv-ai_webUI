@@ -294,8 +294,8 @@ footer b{color:#D6DEE3}
   </div>
   <div class="infra">
     <div class="infra-card">
-      <span class="tag">Заготовка — заполнить</span>
-      <p>Сюда вписываются шаги по развёртыванию моделей из отдельной работы (сборка и запуск llama.cpp, параметры Qwen, эмбеддинги, база знаний). Ориентир по портам и режимам:</p>
+      <span class="tag">Отдельная тема</span>
+      <p>Сборка и запуск llama.cpp, параметры Qwen, эмбеддинги, база знаний. Ориентир по портам и режимам:</p>
       <div class="infra-grid">
         <div>llama.cpp: OpenAI-совместимый API, порт 8000, ключи <code>--jinja</code> и <code>--mmproj</code> (vision)</div>
         <div>Модель Qwen в thinking-режиме (reasoning-format deepseek)</div>
@@ -317,10 +317,10 @@ footer b{color:#D6DEE3}
   <div class="doc-grid">
   <div class="doc-block"><h4>Архитектура</h4><p>Один процесс Python (FastAPI + uvicorn) раздаёт статику и проксирует запросы. Фронтенд — vanilla ES-модули без этапа сборки. Хранилище — файл SQLite (WAL). Обращения наружу — только к модели и базе знаний.</p>
   <pre class="wire">[Браузер] ──HTTP──▶ [FastAPI :8080]
-                       ├─ /api/chat  ──SSE──▶ llama.cpp :8000 (/v1/chat/completions)
-                       ├─ /api/rag   ───────▶ LightRAG (URL из конфига)
-                       ├─ SQLite (users, chats, messages, notes, events, audit_log, …)
-                       └─ статика (index.html, css, js, шрифты)</pre></div>
+      ├─ /api/chat  ──SSE──▶ llama.cpp :8000 (/v1/chat/completions)
+      ├─ /api/rag   ───────▶ LightRAG (URL из конфига)
+      ├─ SQLite (users, chats, messages, notes, events, audit_log, …)
+      └─ статика (index.html, css, js, шрифты)</pre></div>
   <div class="doc-block"><h4>Стек и зависимости</h4><ul>
     <li><b>Backend:</b> Python 3.10+, FastAPI, uvicorn, httpx (SSE), aiosqlite, bcrypt</li>
     <li><b>Документы:</b> python-docx, openpyxl, pypdf, Pillow; системно — poppler-utils (pdftoppm)</li>
@@ -357,5 +357,5 @@ footer b{color:#D6DEE3}
 
 <footer>
   <b>srv-ai webUI</b> — АО «Адмиралтейские верфи», ОСК &nbsp;·&nbsp; локальная LLM в закрытом контуре<br>
-  Полные инструкции по развёртыванию и тестированию — в каталоге <b>docs/</b> репозитория.
+  Полные инструкции по развёртыванию и тестированию — в каталоге <b>docs/</b> репозитория. <br>Барулин М.А. 2026 СПб
 </footer>
