@@ -8,8 +8,8 @@ User=srv-ai-ui
 Group=srv-ai-ui
 WorkingDirectory=/opt/srv-ai-ui
 EnvironmentFile=/opt/srv-ai-ui/.env
-# Хост/порт берутся из .env (APP_HOST, APP_PORT)
-ExecStart=/opt/srv-ai-ui/venv/bin/python -m uvicorn app.main:app --host ${APP_HOST} --port ${APP_PORT}
+# Хост/порт читаются приложением из .env (APP_HOST, APP_PORT)
+ExecStart=/opt/srv-ai-ui/venv/bin/python -m app
 Restart=on-failure
 RestartSec=5
 

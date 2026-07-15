@@ -1,0 +1,28 @@
+[Unit]
+Description=srv-ai webUI (корпоративный веб-интерфейс для LLM)
+After=network.target
+
+[Service]
+Type=simple
+# ВАЖНО: это ПОЛЬЗОВАТЕЛЬСКИЙ юнит (systemctl --user). Здесь НЕ указывают
+# User=/Group= — сервис и так работает от текущего пользователя. Указание
+# User= в user-юните даёт ошибку status=217/USER.
+WorkingDirectory=%h/srv-ai-ui
+EnvironmentFile=%h/srv-ai-ui/.env
+# Хост/порт читаются приложением из .env (APP_HOST, APP_PORT)
+ExecStart=%h/srv-ai-ui/venv/bin/python -m app
+Restart=on-failure
+RestartSec=5
+
+# Логи — в journald (journalctl --user -u srv-ai-ui -f)
+StandardOutput=journal
+StandardError=journal
+
+# Лёгкое усиление (для user-режима; ProtectHome НЕ используем — приложение
+# живёт в домашнем каталоге и должно иметь к нему доступ)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+# В user-режиме цель по умолчанию — default.target (НЕ multi-user.target)
+WantedBy=default.target

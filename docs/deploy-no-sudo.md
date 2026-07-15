@@ -64,6 +64,9 @@ pip install -r requirements.txt
 
 Проверка: `pdftoppm -h` должна показать справку.
 
+> ⚠️ `pip install poppler-utils` — **НЕ то**: это пустышка (пакет-заглушка),
+> `pdftoppm` она не даёт. Нужен именно системный poppler или `conda install poppler`.
+
 ## Шаг 4. Настроить `.env`
 ```
 cp env.example .env
@@ -87,48 +90,53 @@ PII_WHITELIST_FILE=./pii_whitelist.txt
 python -m app.create_admin
 ```
 
-## Шаг 6. Запуск, который переживёт выход из SSH
+## Шаг 6. Запуск как systemd-сервис ПОЛЬЗОВАТЕЛЯ (без root)
 
-Через `nohup` (просто и всегда работает):
+Раз у тебя llama.cpp и эмбеддинги уже работают через `systemctl --user`, ставим
+UI тем же способом. Используй готовый **пользовательский** юнит из репозитория
+(`deploy/srv-ai-ui.user.service`) — НЕ путать с `srv-ai-ui.service` (тот для
+root/sudo).
+
 ```
-nohup venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 > ~/srv-ai-ui/app.log 2>&1 &
+mkdir -p ~/.config/systemd/user
+cp ~/srv-ai-ui/deploy/srv-ai-ui.user.service ~/.config/systemd/user/srv-ai-ui.service
+systemctl --user daemon-reload
+systemctl --user enable --now srv-ai-ui
+systemctl --user status srv-ai-ui
 ```
 Проверить, что поднялось:
 ```
-curl -s http://127.0.0.1:8080/api/health      # ожидаем {"status":"ok"}
-tail -f ~/srv-ai-ui/app.log                    # логи (Ctrl+C чтобы выйти из просмотра)
-```
-Остановить:
-```
-pkill -f "uvicorn app.main:app"
+curl -s http://127.0.0.1:8080/api/health     # ожидаем {"status":"ok"}
+journalctl --user -u srv-ai-ui -f            # логи (Ctrl+C — выйти из просмотра)
 ```
 
-> Альтернатива — `tmux`: `tmux new -s srvai`, внутри запусти uvicorn обычной
-> командой, отцепись `Ctrl+B` затем `D`. Вернуться: `tmux attach -t srvai`.
+### Частые ошибки (именно они ломают запуск)
 
-## Шаг 7. Автозапуск после перезагрузки сервера (без root)
+- **`status=217/USER`** — в юните указаны `User=`/`Group=`. В пользовательском
+  юните их быть НЕ должно (сервис и так работает от тебя). В нашем
+  `srv-ai-ui.user.service` их нет — используй именно его.
+- **`added as a dependency to a non-existent unit multi-user.target`** — в
+  `[Install]` стоит `WantedBy=multi-user.target`. В user-режиме нужно
+  `WantedBy=default.target` (в нашем файле уже так).
+- **Сервис не видит свои файлы / падает** — из-за `ProtectHome=true` (прячет
+  домашний каталог, где лежит приложение). В user-юните эту строку не ставим.
+- **`Failed to enable ... Access denied` / запрос пароля polkit** — это ты
+  случайно вызвал БЕЗ `--user` (системный systemd, куда прав нет). Всегда
+  добавляй `--user`.
 
-Сделай скрипт запуска `~/srv-ai-ui/run.sh`:
-```
-#!/usr/bin/env bash
-cd "$HOME/srv-ai-ui"
-exec venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 >> app.log 2>&1
-```
-```
-chmod +x ~/srv-ai-ui/run.sh
-```
-Добавь в **пользовательский** crontab (root не нужен):
-```
-crontab -e
-```
-и впиши строку:
-```
-@reboot ~/srv-ai-ui/run.sh
-```
-Теперь после ребута сервера интерфейс поднимется сам под твоим пользователем.
+## Шаг 7. Автозапуск после перезагрузки сервера
 
-> Если на сервере разрешён «linger», можно вместо crontab использовать
-> `systemctl --user` — но crontab-вариант работает везде и не требует прав.
+Чтобы user-сервисы стартовали до входа по SSH, нужен «linger». Проверь:
+```
+loginctl show-user "$USER" | grep Linger
+```
+Если `Linger=yes` — всё, `enable --now` уже обеспечил автозапуск. Если `no` и
+включить не даёт (нужен админ) — сервис поднимется при первом входе по SSH; либо
+попроси админа один раз выполнить `loginctl enable-linger <твой_логин>`.
+
+> Запасной вариант без systemd вообще: `nohup ~/srv-ai-ui/venv/bin/python -m app
+> > ~/srv-ai-ui/app.log 2>&1 &` и строка `@reboot ~/srv-ai-ui/venv/bin/python -m
+> app` в `crontab -e`.
 
 ---
 
