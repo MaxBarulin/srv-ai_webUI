@@ -4,9 +4,15 @@ import { escapeHtml, renderMarkdown } from "/static/js/markdown.js";
 
 let chats = [];
 let activeChatId = null;
-let abortController = null; // не null — идёт генерация
+// Состояние стриминга — по одному на чат. Инференс в чате продолжается, даже
+// если пользователь ушёл в другой чат; кнопки/панель относятся к активному чату.
+// chatId -> { ac, live, liveBody, liveReasoning, queueNote, reasoningText,
+//             contentText, messageId, statsData }
+const streams = new Map();
 let pendingAttachments = []; // разобранные вложения для следующего сообщения
 let specializations = [];    // кэш активных специализаций (для селектов)
+
+function isStreaming(chatId) { return chatId !== null && streams.has(chatId); }
 
 const els = {};
 
@@ -67,7 +73,7 @@ export function initChat(toast) {
       sendMessage();
     }
   });
-  els.stopBtn.addEventListener("click", () => abortController?.abort());
+  els.stopBtn.addEventListener("click", () => streams.get(activeChatId)?.ac.abort());
 
   // Кнопки «Копировать» в блоках кода (инлайн-обработчики запрещены CSP)
   els.messages.addEventListener("click", (e) => {
@@ -287,7 +293,13 @@ function renderChatList() {
     const titleBtn = document.createElement("button");
     titleBtn.type = "button";
     titleBtn.className = "chat-title";
-    titleBtn.textContent = chat.title;
+    if (isStreaming(chat.id)) {
+      const spin = document.createElement("span");
+      spin.className = "chat-spinner";
+      spin.title = "Идёт генерация";
+      titleBtn.appendChild(spin);
+    }
+    titleBtn.appendChild(document.createTextNode(chat.title));
     titleBtn.title = chat.title;
     titleBtn.addEventListener("click", () => selectChat(chat.id));
     li.appendChild(titleBtn);
@@ -315,10 +327,17 @@ function renderChatList() {
 async function selectChat(id) {
   if (id === activeChatId) return;
   activeChatId = id;
-  showStats(null); // статистика относится к предыдущему чату
   renderChatList();
   await loadMessages();
+  // Если в этом чате идёт генерация — вернуть на экран её живой ответ и статистику
+  const st = streams.get(id);
+  if (st) {
+    els.messages.appendChild(st.live);
+    renderLive(st);
+  }
+  showStats(st ? st.statsData : null);
   updateInputState();
+  scrollToBottom();
 }
 
 async function createChat() {
@@ -327,6 +346,7 @@ async function createChat() {
   const chat = await api("/api/chats", { method: "POST", body });
   activeChatId = chat.id;
   els.messages.replaceChildren(); // новый чат пуст — убрать сообщения предыдущего
+  showStats(null);
   await refreshChats();
   els.input.focus();
 }
@@ -345,8 +365,10 @@ async function renameChat(chat) {
 async function deleteChat(chat) {
   if (!confirm(`Удалить чат «${chat.title}» вместе с историей?`)) return;
   try {
+    streams.get(chat.id)?.ac.abort(); // прервать генерацию удаляемого чата
+    streams.delete(chat.id);
     await api(`/api/chats/${chat.id}`, { method: "DELETE" });
-    if (activeChatId === chat.id) activeChatId = null;
+    if (activeChatId === chat.id) { activeChatId = null; showStats(null); }
     await refreshChats();
     if (activeChatId === null) els.messages.replaceChildren();
   } catch (e) {
@@ -511,7 +533,8 @@ async function loadMessages() {
 }
 
 function updateInputState() {
-  const streaming = abortController !== null;
+  // Состояние строки ввода относится к активному чату (у каждого чата — своё)
+  const streaming = isStreaming(activeChatId);
   const hasChat = activeChatId !== null;
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
@@ -523,6 +546,17 @@ function updateInputState() {
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;
   els.stopBtn.hidden = !streaming;
+}
+
+// Перерисовать живой ответ стрима в его DOM-узел (узел может быть откреплён,
+// если пользователь в другом чате — тогда просто обновляем в памяти).
+function renderLive(st, scroll = false) {
+  if (st.reasoningText) {
+    st.liveReasoning.hidden = false;
+    st.liveReasoning.querySelector(".reasoning-body").textContent = st.reasoningText;
+  }
+  st.liveBody.innerHTML = renderMarkdown(st.contentText);
+  if (scroll && st.chatId === activeChatId) scrollToBottom();
 }
 
 // Панель статистики над строкой ввода (счётчики сервера, как в llama.cpp)
@@ -541,28 +575,35 @@ function showStats(stats) {
 // --- «Продолжить» и «Удалить последнее» (как в web UI llama.cpp) ---
 
 async function continueGeneration() {
-  if (activeChatId === null || abortController !== null) return;
+  if (activeChatId === null || isStreaming(activeChatId)) return;
   const chatId = activeChatId;
 
   const live = document.createElement("div");
   live.className = "msg msg-assistant";
+  const queueNote = document.createElement("div");
+  queueNote.className = "msg-note queue-note";
+  queueNote.hidden = true;
   const liveReasoning = reasoningBlock("", false);
   liveReasoning.hidden = true;
   const liveBody = document.createElement("div");
   liveBody.className = "msg-body";
+  live.appendChild(queueNote);
   live.appendChild(liveReasoning);
   live.appendChild(liveBody);
   els.messages.appendChild(live);
 
-  let reasoningText = "";
-  let contentText = "";
-  abortController = new AbortController();
+  const st = {
+    chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
+    reasoningText: "", contentText: "", messageId: null, statsData: null,
+  };
+  streams.set(chatId, st);
   updateInputState();
+  renderChatList();
 
   try {
     const r = await fetch(`/api/chats/${chatId}/continue`, {
       method: "POST",
-      signal: abortController.signal,
+      signal: st.ac.signal,
     });
     if (r.status === 401) { location.href = "/login"; return; }
     if (!r.ok) {
@@ -576,33 +617,37 @@ async function continueGeneration() {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
-        if (event === "queued") { /* очередь коротка для продолжений */ }
-        else if (event === "reasoning") reasoningText += data.text;
-        else if (event === "content") contentText += data.text;
-        else if (event === "stats") showStats(data);
-        else if (event === "error") throw new Error(data.detail);
+        if (event === "queued") {
+          queueNote.hidden = false;
+          queueNote.textContent = `В очереди: ${data.position}…`;
+        } else if (event === "queue_ready") {
+          queueNote.hidden = true;
+        } else if (event === "reasoning") st.reasoningText += data.text;
+        else if (event === "content") st.contentText += data.text;
+        else if (event === "stats") {
+          st.statsData = data;
+          if (chatId === activeChatId) showStats(data);
+        } else if (event === "error") throw new Error(data.detail);
       });
-      if (reasoningText) {
-        liveReasoning.hidden = false;
-        liveReasoning.querySelector(".reasoning-body").textContent = reasoningText;
-      }
-      liveBody.innerHTML = renderMarkdown(contentText);
-      scrollToBottom();
+      renderLive(st, true);
     }
   } catch (e) {
     if (e.name !== "AbortError") els.toast(e.message || "Не удалось продолжить", true);
   } finally {
-    abortController = null;
-    updateInputState();
+    streams.delete(chatId);
     live.remove();
+    renderChatList();
     // Продолжение дописано к сообщению в БД — перечитываем историю целиком
-    if (activeChatId === chatId) await loadMessages().catch(() => {});
-    els.input.focus();
+    if (chatId === activeChatId) {
+      updateInputState();
+      await loadMessages().catch(() => {});
+      els.input.focus();
+    }
   }
 }
 
 async function deleteLastMessage() {
-  if (activeChatId === null || abortController !== null) return;
+  if (activeChatId === null || isStreaming(activeChatId)) return;
   const messages = await api(`/api/chats/${activeChatId}/messages`);
   if (!messages.length) { els.toast("В чате нет сообщений"); return; }
   const last = messages[messages.length - 1];
@@ -636,9 +681,12 @@ function parseSseBuffer(buffer, onEvent) {
 
 async function sendMessage() {
   const content = els.input.value.trim();
+  // Отправлять можно, только если в ЭТОМ чате сейчас нет генерации.
+  // В другом чате генерация может идти параллельно — бэкенд поставит в очередь.
   if ((!content && pendingAttachments.length === 0) || activeChatId === null
-      || abortController !== null) return;
+      || isStreaming(activeChatId)) return;
 
+  const chatId = activeChatId;
   const attachments = pendingAttachments;
   pendingAttachments = [];
   renderAttachments();
@@ -668,23 +716,15 @@ async function sendMessage() {
   live.appendChild(liveBody);
   els.messages.appendChild(live);
 
-  let reasoningText = "";
-  let contentText = "";
-  let messageId = null;
-  const chatId = activeChatId;
-
-  abortController = new AbortController();
-  updateInputState();
-
-  const render = () => {
-    if (reasoningText) {
-      liveReasoning.hidden = false;
-      liveReasoning.querySelector(".reasoning-body").textContent = reasoningText;
-    }
-    liveBody.innerHTML = renderMarkdown(contentText);
-    scrollToBottom();
+  const st = {
+    chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
+    reasoningText: "", contentText: "", messageId: null, statsData: null,
   };
+  streams.set(chatId, st);
+  updateInputState();
+  renderChatList(); // показать индикатор генерации в списке
 
+  let renamed = null;
   try {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
@@ -697,7 +737,7 @@ async function sendMessage() {
           filename: a.filename, text: a.text || "", images: a.images || [],
         })),
       }),
-      signal: abortController.signal,
+      signal: st.ac.signal,
     });
     if (r.status === 401) { location.href = "/login"; return; }
     if (!r.ok) {
@@ -708,7 +748,6 @@ async function sendMessage() {
     const reader = r.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let renamed = null;
 
     for (;;) {
       const { done, value } = await reader.read();
@@ -719,14 +758,15 @@ async function sendMessage() {
           queueNote.textContent = `В очереди: ${data.position}…`;
         } else if (event === "queue_ready") {
           queueNote.hidden = true;
-        } else if (event === "reasoning") reasoningText += data.text;
-        else if (event === "content") contentText += data.text;
+        } else if (event === "reasoning") st.reasoningText += data.text;
+        else if (event === "content") st.contentText += data.text;
         else if (event === "tool") {
           live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
         } else if (event === "tool_confirm") {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
         } else if (event === "stats") {
-          showStats(data);
+          st.statsData = data;
+          if (chatId === activeChatId) showStats(data);
         } else if (event === "sources") {
           live.insertBefore(sourcesBlock(data.text), liveBody);
         } else if (event === "pii_masked") {
@@ -742,20 +782,20 @@ async function sendMessage() {
         } else if (event === "error") throw new Error(data.detail);
         else if (event === "done") {
           if (data.title) renamed = data.title;
-          if (data.message_id) messageId = data.message_id;
+          if (data.message_id) st.messageId = data.message_id;
         }
       });
-      render();
+      renderLive(st, true);
     }
 
     if (renamed) {
       const chat = chats.find((c) => c.id === chatId);
-      if (chat) { chat.title = renamed; renderChatList(); }
+      if (chat) chat.title = renamed;
     }
     // Панель действий под ответом (§15) — только если ответ сохранён
-    if (messageId && (contentText || live.querySelector(".tool-chip"))) {
-      live.dataset.messageId = String(messageId);
-      live.appendChild(answerActions(null, () => contentText, liveBody));
+    if (st.messageId && (st.contentText || live.querySelector(".tool-chip"))) {
+      live.dataset.messageId = String(st.messageId);
+      live.appendChild(answerActions(null, () => st.contentText, liveBody));
     }
   } catch (e) {
     if (e.name === "AbortError") {
@@ -770,15 +810,17 @@ async function sendMessage() {
       live.appendChild(note);
     }
   } finally {
-    abortController = null;
-    updateInputState();
-    if (!reasoningText && !contentText
-        && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip")) live.remove();
-    // Если во время генерации переключались между чатами, живой контейнер был
-    // удалён из DOM — ответ дописывался «в никуда». Перечитываем историю из БД.
-    if (!live.isConnected && activeChatId === chatId) {
+    streams.delete(chatId);
+    const empty = !st.reasoningText && !st.contentText
+      && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip");
+    if (empty) live.remove();
+    renderChatList(); // убрать индикатор генерации
+    // Если этот чат сейчас открыт — снять блокировку ввода и перечитать историю
+    // из БД (чистая версия + панель оценки). Иначе ничего не трогаем.
+    if (chatId === activeChatId) {
+      updateInputState();
       await loadMessages().catch(() => {});
+      els.input.focus();
     }
-    els.input.focus();
   }
 }

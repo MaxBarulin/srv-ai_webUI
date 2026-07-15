@@ -706,6 +706,20 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-body th { background: var(--osk-bg); font-weight: 700; }
 
 /* Поле ввода */
+/* Индикатор идущей генерации в списке чатов */
+.chat-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  border: 2px solid var(--osk-line);
+  border-top-color: var(--osk-red);
+  border-radius: 50%;
+  animation: chat-spin 0.7s linear infinite;
+}
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+
 /* Панель статуса над строкой ввода (как в llama.cpp): статистика + действия */
 .chat-status {
   display: flex;
