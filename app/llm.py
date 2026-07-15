@@ -81,17 +81,23 @@ async def stream_chat(
 ) -> AsyncIterator[tuple[str, str]]:
     """Yield ("reasoning" | "content", delta_text) from a streaming completion.
 
-    Если модель вернула вызовы инструментов — последним элементом отдаётся
-    ("tool_calls", JSON-список в формате OpenAI).
+    В конце дополнительно отдаются:
+    - ("tool_calls", JSON-список в формате OpenAI) — если модель вызвала инструменты;
+    - ("stats", JSON) — счётчики сервера: prompt_tokens, completion_tokens,
+      tokens_per_second (llama.cpp отдаёт timings с реальной скоростью —
+      тот же способ подсчёта, что в её собственном web UI).
     """
     payload = {
         "model": settings.llm_model,
         "messages": messages,
         "stream": True,
+        # usage в финальном чанке (OpenAI-совместимо; llama.cpp поддерживает)
+        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
     tool_calls: dict[int, dict] = {}
+    stats: dict = {}
     try:
         async with make_client() as client:
             async with client.stream("POST", "/chat/completions", json=payload) as response:
@@ -108,6 +114,19 @@ async def stream_chat(
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # usage/timings приходят в чанке без choices (или в последнем)
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict):
+                        stats["prompt_tokens"] = usage.get("prompt_tokens", 0)
+                        stats["completion_tokens"] = usage.get("completion_tokens", 0)
+                    timings = chunk.get("timings")  # llama.cpp-специфичное поле
+                    if isinstance(timings, dict):
+                        if timings.get("predicted_per_second"):
+                            stats["tokens_per_second"] = round(timings["predicted_per_second"], 1)
+                        if timings.get("predicted_n"):
+                            stats.setdefault("completion_tokens", timings["predicted_n"])
+                        if timings.get("prompt_n"):
+                            stats.setdefault("prompt_tokens", timings["prompt_n"])
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -127,3 +146,5 @@ async def stream_chat(
         calls = [c for c in calls if c["function"]["name"]]
         if calls:
             yield "tool_calls", json.dumps(calls, ensure_ascii=False)
+    if stats:
+        yield "stats", json.dumps(stats)

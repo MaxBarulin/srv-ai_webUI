@@ -706,6 +706,24 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-body th { background: var(--osk-bg); font-weight: 700; }
 
 /* Поле ввода */
+/* Панель статуса над строкой ввода (как в llama.cpp): статистика + действия */
+.chat-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 28px;
+  border-top: 1px solid var(--osk-line);
+  background: var(--osk-bg);
+  font-size: 12px;
+  color: var(--osk-slate);
+  flex-wrap: wrap;
+}
+.chat-status[hidden] { display: none; }
+.chat-status-actions { display: flex; gap: 8px; }
+.chat-status .btn { font-size: 12px; padding: 3px 10px; }
+.chat-status .btn:disabled { opacity: 0.4; }
+
 .chat-input-row {
   display: flex;
   flex-direction: column;

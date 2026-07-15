@@ -34,7 +34,14 @@ export function initChat(toast) {
   els.promptModal = $("prompt-modal");
   els.promptSpec = $("prompt-spec");
   els.promptCustom = $("prompt-custom");
+  els.status = $("chat-status");
+  els.stats = $("chat-stats");
+  els.continueBtn = $("chat-continue-btn");
+  els.delLastBtn = $("chat-del-last-btn");
   els.toast = toast;
+
+  els.continueBtn.addEventListener("click", continueGeneration);
+  els.delLastBtn.addEventListener("click", deleteLastMessage);
 
   els.attachBtn.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", onFileSelected);
@@ -308,6 +315,7 @@ function renderChatList() {
 async function selectChat(id) {
   if (id === activeChatId) return;
   activeChatId = id;
+  showStats(null); // статистика относится к предыдущему чату
   renderChatList();
   await loadMessages();
   updateInputState();
@@ -508,10 +516,105 @@ function updateInputState() {
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
   els.context.hidden = !hasChat;
+  els.status.hidden = !hasChat;
+  els.continueBtn.disabled = streaming;
+  els.delLastBtn.disabled = streaming;
   updatePromptButton();
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;
   els.stopBtn.hidden = !streaming;
+}
+
+// Панель статистики над строкой ввода (счётчики сервера, как в llama.cpp)
+function showStats(stats) {
+  if (!stats || !stats.completion_tokens) { els.stats.textContent = ""; return; }
+  const parts = [`${stats.completion_tokens} ток.`];
+  if (stats.tokens_per_second) parts.push(`${stats.tokens_per_second} ток/с`);
+  if (stats.context_percent !== null && stats.context_percent !== undefined) {
+    parts.push(`контекст: ${stats.context_percent}% из ${stats.context_size}`);
+  } else if (stats.context_used) {
+    parts.push(`контекст: ${stats.context_used} ток.`);
+  }
+  els.stats.textContent = parts.join(" · ");
+}
+
+// --- «Продолжить» и «Удалить последнее» (как в web UI llama.cpp) ---
+
+async function continueGeneration() {
+  if (activeChatId === null || abortController !== null) return;
+  const chatId = activeChatId;
+
+  const live = document.createElement("div");
+  live.className = "msg msg-assistant";
+  const liveReasoning = reasoningBlock("", false);
+  liveReasoning.hidden = true;
+  const liveBody = document.createElement("div");
+  liveBody.className = "msg-body";
+  live.appendChild(liveReasoning);
+  live.appendChild(liveBody);
+  els.messages.appendChild(live);
+
+  let reasoningText = "";
+  let contentText = "";
+  abortController = new AbortController();
+  updateInputState();
+
+  try {
+    const r = await fetch(`/api/chats/${chatId}/continue`, {
+      method: "POST",
+      signal: abortController.signal,
+    });
+    if (r.status === 401) { location.href = "/login"; return; }
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.detail || `Ошибка ${r.status}`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
+        if (event === "queued") { /* очередь коротка для продолжений */ }
+        else if (event === "reasoning") reasoningText += data.text;
+        else if (event === "content") contentText += data.text;
+        else if (event === "stats") showStats(data);
+        else if (event === "error") throw new Error(data.detail);
+      });
+      if (reasoningText) {
+        liveReasoning.hidden = false;
+        liveReasoning.querySelector(".reasoning-body").textContent = reasoningText;
+      }
+      liveBody.innerHTML = renderMarkdown(contentText);
+      scrollToBottom();
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") els.toast(e.message || "Не удалось продолжить", true);
+  } finally {
+    abortController = null;
+    updateInputState();
+    live.remove();
+    // Продолжение дописано к сообщению в БД — перечитываем историю целиком
+    if (activeChatId === chatId) await loadMessages().catch(() => {});
+    els.input.focus();
+  }
+}
+
+async function deleteLastMessage() {
+  if (activeChatId === null || abortController !== null) return;
+  const messages = await api(`/api/chats/${activeChatId}/messages`);
+  if (!messages.length) { els.toast("В чате нет сообщений"); return; }
+  const last = messages[messages.length - 1];
+  const kind = last.role === "assistant" ? "ответ модели" : "сообщение";
+  if (!confirm(`Удалить последнее ${kind} из чата и истории?`)) return;
+  try {
+    await api(`/api/chats/${activeChatId}/messages/${last.id}`, { method: "DELETE" });
+    await loadMessages();
+    els.toast("Сообщение удалено");
+  } catch (e) {
+    els.toast(e.detail, true);
+  }
 }
 
 // --- Отправка и стриминг ---
@@ -622,6 +725,8 @@ async function sendMessage() {
           live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
         } else if (event === "tool_confirm") {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
+        } else if (event === "stats") {
+          showStats(data);
         } else if (event === "sources") {
           live.insertBefore(sourcesBlock(data.text), liveBody);
         } else if (event === "pii_masked") {

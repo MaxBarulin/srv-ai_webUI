@@ -200,6 +200,25 @@ async def list_messages(
     return result
 
 
+@router.delete("/{chat_id}/messages/{message_id}")
+async def delete_message(
+    chat_id: int,
+    message_id: int,
+    user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    """Удалить одно сообщение из чата (и его оценки) — как в web UI llama.cpp."""
+    await _get_own_chat(db, chat_id, user["id"])
+    cursor = await db.execute(
+        "SELECT id FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+    if await cursor.fetchone() is None:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+    await db.execute("DELETE FROM feedback WHERE message_id = ?", (message_id,))
+    await db.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+    await db.commit()
+    return {"ok": True}
+
+
 class FeedbackRequest(BaseModel):
     rating: int  # 1 (👍) или -1 (👎)
     comment: str = ""
@@ -269,6 +288,44 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
+    """История для LLM: без reasoning (§4 ТЗ); текст документов из вложений
+    восстанавливается в сообщение (контекст сохраняется); пустые — пропускаются."""
+    cursor = await db.execute(
+        "SELECT role, content, tool_calls_json FROM messages WHERE chat_id = ? ORDER BY id",
+        (chat_id,),
+    )
+    history = []
+    for row in await cursor.fetchall():
+        text = row["content"]
+        if row["role"] == "user" and row["tool_calls_json"]:
+            try:
+                meta = json.loads(row["tool_calls_json"])
+            except json.JSONDecodeError:
+                meta = {}
+            if isinstance(meta, dict):
+                for att in meta.get("attachments", []):
+                    if att.get("image"):
+                        text += f"\n[приложено изображение: {att.get('filename', '')}]"
+                    elif att.get("text"):
+                        text += f"\n\n[Документ: {att.get('filename', 'файл')}]\n{att['text']}"
+        if text.strip():
+            history.append({"role": row["role"], "content": text})
+    return history
+
+
+async def _chat_spec_prompt(db: aiosqlite.Connection, chat: aiosqlite.Row) -> str:
+    """Свой промпт чата (§15) имеет приоритет над специализацией."""
+    spec_prompt = (chat["custom_prompt"] or "").strip()
+    if not spec_prompt and chat["specialization_id"] is not None:
+        cursor = await db.execute(
+            "SELECT system_prompt FROM specializations WHERE id = ?", (chat["specialization_id"],))
+        spec_row = await cursor.fetchone()
+        if spec_row is not None:
+            spec_prompt = spec_row["system_prompt"]
+    return spec_prompt
+
+
 @router.post("/{chat_id}/messages")
 async def send_message(
     chat_id: int,
@@ -335,38 +392,8 @@ async def send_message(
     if doc_texts:
         text_for_model = (content + "\n\n" + "\n\n".join(doc_texts)).strip()
 
-    # История для LLM: system + прежние сообщения без reasoning (§4 ТЗ).
-    # Текст документов из вложений восстанавливается в сообщение (контекст
-    # сохраняется в последующих вопросах); пустые ответы не включаем.
-    cursor = await db.execute(
-        "SELECT role, content, tool_calls_json FROM messages WHERE chat_id = ? ORDER BY id",
-        (chat_id,),
-    )
-    history = []
-    for row in await cursor.fetchall():
-        text = row["content"]
-        if row["role"] == "user" and row["tool_calls_json"]:
-            try:
-                meta = json.loads(row["tool_calls_json"])
-            except json.JSONDecodeError:
-                meta = {}
-            if isinstance(meta, dict):
-                for att in meta.get("attachments", []):
-                    if att.get("image"):
-                        text += f"\n[приложено изображение: {att.get('filename', '')}]"
-                    elif att.get("text"):
-                        text += f"\n\n[Документ: {att.get('filename', 'файл')}]\n{att['text']}"
-        if text.strip():
-            history.append({"role": row["role"], "content": text})
-
-    # Свой промпт чата (§15) имеет приоритет над специализацией
-    spec_prompt = (chat["custom_prompt"] or "").strip()
-    if not spec_prompt and chat["specialization_id"] is not None:
-        cursor = await db.execute(
-            "SELECT system_prompt FROM specializations WHERE id = ?", (chat["specialization_id"],))
-        spec_row = await cursor.fetchone()
-        if spec_row is not None:
-            spec_prompt = spec_row["system_prompt"]
+    history = await _build_history(db, chat_id)
+    spec_prompt = await _chat_spec_prompt(db, chat)
 
     # Изображения передаются модели через OpenAI-формат image_url (§16)
     if image_urls:
@@ -443,6 +470,11 @@ async def send_message(
         had_error = False
         gen_start = None
         msgs = list(llm_messages)
+        # Счётчики сервера (llama.cpp usage/timings) — суммируются по итерациям цикла
+        total_completion = 0
+        total_gen_seconds = 0.0
+        last_prompt_tokens = 0
+        server_stats_seen = False
         ticket = llm_queue.enqueue()
         try:
             # Ждём своей очереди к модели, отдавая честную позицию (§15)
@@ -498,6 +530,15 @@ async def send_message(
                             yield _sse("content", {"text": text})
                     elif kind == "tool_calls":
                         tool_calls = json.loads(text)
+                    elif kind == "stats":
+                        step_stats = json.loads(text)
+                        server_stats_seen = True
+                        completion = step_stats.get("completion_tokens", 0)
+                        total_completion += completion
+                        last_prompt_tokens = step_stats.get("prompt_tokens", last_prompt_tokens)
+                        tps = step_stats.get("tokens_per_second", 0)
+                        if completion and tps:
+                            total_gen_seconds += completion / tps
 
                 step_text = "".join(step_parts)
                 fallback_used = False
@@ -535,11 +576,20 @@ async def send_message(
             had_error = True
         finally:
             ticket.release()
-            # Метрики (§13): факт запроса и средняя скорость, без содержания
+            # Метрики (§13): предпочитаем счётчики самого сервера (llama.cpp
+            # usage/timings — тот же способ, что в её web UI). Fallback — грубая
+            # оценка по символам (включая reasoning) за время генерации.
             if gen_start is not None:
-                elapsed = time.monotonic() - gen_start
-                tokens = len("".join(content_parts)) // 3
-                metrics.record_request(success=not had_error, tokens=tokens, seconds=elapsed)
+                if server_stats_seen and total_completion and total_gen_seconds:
+                    metrics.record_request(success=not had_error,
+                                           tokens=total_completion,
+                                           seconds=total_gen_seconds)
+                else:
+                    elapsed = time.monotonic() - gen_start
+                    tokens = (len("".join(content_parts))
+                              + len("".join(reasoning_parts))) // 3
+                    metrics.record_request(success=not had_error,
+                                           tokens=tokens, seconds=elapsed)
             saved_id = None
             if content_parts or reasoning_parts or tool_activity:
                 # При разрыве стрима (кнопка «Остановить») сохраняем частичный ответ;
@@ -550,7 +600,142 @@ async def send_message(
                 with contextlib.suppress(asyncio.CancelledError):
                     saved_id = await asyncio.shield(save)
             if finished:
+                if server_stats_seen:
+                    context_used = last_prompt_tokens + total_completion
+                    stats_payload = {
+                        "completion_tokens": total_completion,
+                        "tokens_per_second": round(total_completion / total_gen_seconds, 1)
+                        if total_gen_seconds else 0,
+                        "context_used": context_used,
+                        "context_size": settings.llm_context_size,
+                        "context_percent": round(context_used / settings.llm_context_size * 100)
+                        if settings.llm_context_size else None,
+                    }
+                    yield _sse("stats", stats_payload)
                 yield _sse("done", {"message_id": saved_id, "title": auto_title})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+CONTINUE_INSTRUCTION = (
+    "Продолжи свой предыдущий ответ ровно с того места, где он оборвался. "
+    "Не повторяй уже написанное и не добавляй вступлений — просто продолжай текст."
+)
+
+
+async def _append_to_message(message_id: int, chat_id: int, extra: str) -> None:
+    """Дописать продолжение к существующему ответу (своё соединение — переживает разрыв)."""
+    async with get_connection() as db:
+        await db.execute("UPDATE messages SET content = content || ? WHERE id = ?",
+                         (extra, message_id))
+        await db.execute("UPDATE chats SET updated_at = ? WHERE id = ?",
+                         (utcnow_iso(), chat_id))
+        await db.commit()
+
+
+@router.post("/{chat_id}/continue")
+async def continue_generation(
+    chat_id: int,
+    user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> StreamingResponse:
+    """Возобновить генерацию последнего ответа (кнопка «Продолжить», как в llama.cpp).
+
+    Продолжение дописывается к тому же сообщению в БД. Инструменты и RAG в
+    продолжении не используются — только дописывание текста.
+    """
+    chat = await _get_own_chat(db, chat_id, user["id"])
+    cursor = await db.execute(
+        "SELECT id, role, content FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1",
+        (chat_id,))
+    last = await cursor.fetchone()
+    if last is None or last["role"] != "assistant" or not last["content"].strip():
+        raise HTTPException(status_code=400,
+                            detail="Продолжать нечего: последний ответ отсутствует или пуст")
+    message_id = last["id"]
+
+    spec_prompt = await _chat_spec_prompt(db, chat)
+    history = await _build_history(db, chat_id)
+    llm_messages = [
+        {"role": "system", "content": build_system_prompt(user["display_name"], spec_prompt)},
+        *history,  # история уже заканчивается продолжаемым ответом ассистента
+        {"role": "user", "content": CONTINUE_INSTRUCTION},
+    ]
+
+    async def event_stream():
+        content_parts: list[str] = []
+        finished = False
+        had_error = False
+        gen_start = None
+        total_completion = 0
+        total_gen_seconds = 0.0
+        last_prompt_tokens = 0
+        server_stats_seen = False
+        ticket = llm_queue.enqueue()
+        try:
+            try:
+                async for position in ticket.wait_turn():
+                    yield _sse("queued", {"position": position})
+            except QueueTimeout as exc:
+                yield _sse("error", {"detail": str(exc)})
+                metrics.record_request(success=False)
+                return
+            yield _sse("queue_ready", {})
+            gen_start = time.monotonic()
+
+            async for kind, text in stream_chat(llm_messages):
+                if kind == "reasoning":
+                    yield _sse("reasoning", {"text": text})
+                elif kind == "content":
+                    content_parts.append(text)
+                    yield _sse("content", {"text": text})
+                elif kind == "stats":
+                    step_stats = json.loads(text)
+                    server_stats_seen = True
+                    total_completion = step_stats.get("completion_tokens", 0)
+                    last_prompt_tokens = step_stats.get("prompt_tokens", 0)
+                    tps = step_stats.get("tokens_per_second", 0)
+                    if total_completion and tps:
+                        total_gen_seconds = total_completion / tps
+            finished = True
+        except LLMError as exc:
+            yield _sse("error", {"detail": str(exc)})
+            finished = True
+            had_error = True
+        finally:
+            ticket.release()
+            if gen_start is not None:
+                if server_stats_seen and total_completion and total_gen_seconds:
+                    metrics.record_request(success=not had_error,
+                                           tokens=total_completion,
+                                           seconds=total_gen_seconds)
+                else:
+                    metrics.record_request(
+                        success=not had_error,
+                        tokens=len("".join(content_parts)) // 3,
+                        seconds=time.monotonic() - gen_start)
+            if content_parts:
+                extra = "".join(content_parts)
+                save = asyncio.create_task(_append_to_message(message_id, chat_id, extra))
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(save)
+            if finished:
+                if server_stats_seen:
+                    context_used = last_prompt_tokens + total_completion
+                    yield _sse("stats", {
+                        "completion_tokens": total_completion,
+                        "tokens_per_second": round(total_completion / total_gen_seconds, 1)
+                        if total_gen_seconds else 0,
+                        "context_used": context_used,
+                        "context_size": settings.llm_context_size,
+                        "context_percent": round(context_used / settings.llm_context_size * 100)
+                        if settings.llm_context_size else None,
+                    })
+                yield _sse("done", {"message_id": message_id, "title": None})
 
     return StreamingResponse(
         event_stream(),

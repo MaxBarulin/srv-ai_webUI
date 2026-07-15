@@ -50,6 +50,7 @@ class Settings:
     llm_api_key: str
     llm_model: str
     llm_timeout: int
+    llm_context_size: int
     rag_enabled: bool
     rag_base_url: str
     rag_api_key: str
@@ -78,6 +79,7 @@ def load_settings() -> Settings:
         llm_api_key=_get("LLM_API_KEY", "").strip(),
         llm_model=_get("LLM_MODEL", "qwen3.6-35b"),
         llm_timeout=_get_int("LLM_TIMEOUT", 600),
+        llm_context_size=_get_int("LLM_CONTEXT_SIZE", 0),
         rag_enabled=_get_bool("RAG_ENABLED", True),
         rag_base_url=_get("RAG_BASE_URL", ""),
         rag_api_key=_get("RAG_API_KEY", "").strip(),

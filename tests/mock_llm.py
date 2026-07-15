@@ -111,6 +111,12 @@ async def chat_completions(request: Request):
                 for text in _content_chunks(last_user):
                     yield chunk({"content": text})
                     await asyncio.sleep(2.0 if slow else 0.01)
+        # Финальный чанк со счётчиками — как llama.cpp (usage + timings)
+        yield "data: " + json.dumps({
+            "choices": [],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125},
+            "timings": {"prompt_n": 100, "predicted_n": 25, "predicted_per_second": 18.5},
+        }) + "\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")
