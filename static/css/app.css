@@ -1181,3 +1181,6 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   .content { padding: 20px; }
   .form-row { flex-direction: column; gap: 0; }
 }
+
+/* Формулы KaTeX: широкие — скролл внутри блока */
+.msg-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }

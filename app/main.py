@@ -49,7 +49,10 @@ async def security_headers_and_csrf(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    # style-src 'unsafe-inline' — только для инлайн-стилей KaTeX (формулы);
+    # скрипты по-прежнему строго 'self', пользовательский HTML экранируется.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'")
     return response
 
 

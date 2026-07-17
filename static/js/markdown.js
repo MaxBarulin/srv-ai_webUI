@@ -11,6 +11,50 @@ export function escapeHtml(text) {
     .replaceAll('"', "&quot;");
 }
 
+// --- Формулы LaTeX (KaTeX, локальный vendor — без CDN, §12) ---
+// Математика извлекается ДО экранирования и разметки (плейсхолдеры \u0000M<n>\u0000),
+// рендерится KaTeX'ом в самом конце. Внутри ```кода``` формулы не трогаем.
+
+const MATH_PLACEHOLDER = /\u0000M(\d+)\u0000/g;
+
+function extractMath(source, store) {
+  const ph = (tex, display) => {
+    store.push({ tex, display });
+    return `\u0000M${store.length - 1}\u0000`;
+  };
+  // чётные индексы — вне fence-блоков, нечётные — внутри (не трогаем)
+  return source.split(/(```[\s\S]*?(?:```|$))/).map((part, idx) => {
+    if (idx % 2 === 1) return part;
+    return part
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => ph(tex.trim(), true))
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => ph(tex.trim(), true))
+      .replace(/\\\((.+?)\\\)/g, (_, tex) => ph(tex.trim(), false))
+      // инлайн $...$: после открывающего и перед закрывающим нет пробела,
+      // без переносов внутри, после закрывающего нет цифры (не «$5 и $10»)
+      .replace(/(^|[^\\$\w])\$([^\s$](?:[^$\n]*[^\s$\\])?)\$(?![\d$])/g,
+               (_, before, tex) => before + ph(tex, false));
+  }).join("");
+}
+
+function renderMathPlaceholders(html, store) {
+  return html.replace(MATH_PLACEHOLDER, (_, n) => {
+    const item = store[Number(n)];
+    if (!item) return "";
+    const { tex, display } = item;
+    if (typeof katex !== "undefined") {
+      try {
+        return katex.renderToString(tex, {
+          displayMode: display,
+          throwOnError: false,
+          trust: false,       // \href и прочие «доверенные» команды запрещены
+          maxExpand: 1000,    // защита от макро-бомб
+        });
+      } catch { /* падаем в текстовый фолбэк */ }
+    }
+    return escapeHtml(display ? `$$${tex}$$` : `$${tex}$`);
+  });
+}
+
 function inline(text) {
   return text
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -41,7 +85,9 @@ const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}.*\|.*$/;
 
 // Возвращает HTML-строку; вход экранируется целиком до разбора.
 export function renderMarkdown(source) {
-  const lines = escapeHtml(source.replaceAll("\r\n", "\n")).split("\n");
+  const mathStore = [];
+  const prepared = extractMath(source.replaceAll("\r\n", "\n"), mathStore);
+  const lines = escapeHtml(prepared).split("\n");
   const html = [];
   const state = { list: null, para: [] };
   let i = 0;
@@ -139,5 +185,5 @@ export function renderMarkdown(source) {
 
   flushPara(state, html);
   flushList(state, html);
-  return html.join("\n");
+  return renderMathPlaceholders(html.join("\n"), mathStore);
 }
