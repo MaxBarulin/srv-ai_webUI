@@ -50,6 +50,8 @@ class ChatUpdateRequest(BaseModel):
     title: str | None = None
     specialization_id: int | None = None
     custom_prompt: str | None = None
+    use_tools: bool | None = None         # пер-чатовый тумблер «Заметки/Календарь»
+    enable_thinking: bool | None = None   # пер-чатовый тумблер «Размышления»
 
 
 class Attachment(BaseModel):
@@ -68,8 +70,8 @@ class SendMessageRequest(BaseModel):
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, custom_prompt, created_at, updated_at "
-        "FROM chats WHERE id = ? AND user_id = ?",
+        "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
+        "created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
     row = await cursor.fetchone()
@@ -84,8 +86,9 @@ async def list_chats(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, custom_prompt, created_at, updated_at FROM chats "
-        "WHERE user_id = ? ORDER BY updated_at DESC, id DESC",
+        "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
+        "created_at, updated_at FROM chats WHERE user_id = ? "
+        "ORDER BY updated_at DESC, id DESC",
         (user["id"],),
     )
     return [dict(row) for row in await cursor.fetchall()]
@@ -113,7 +116,8 @@ async def create_chat(
     )
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
-            "custom_prompt": custom_prompt, "created_at": now, "updated_at": now}
+            "custom_prompt": custom_prompt, "use_tools": 1, "enable_thinking": 1,
+            "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")
@@ -145,10 +149,18 @@ async def update_chat(
     if "custom_prompt" in provided:
         custom_prompt = (payload.custom_prompt or "").strip()
 
+    use_tools = row["use_tools"]
+    if "use_tools" in provided and payload.use_tools is not None:
+        use_tools = int(payload.use_tools)
+    enable_thinking = row["enable_thinking"]
+    if "enable_thinking" in provided and payload.enable_thinking is not None:
+        enable_thinking = int(payload.enable_thinking)
+
     await db.execute(
-        "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, updated_at = ? "
-        "WHERE id = ?",
-        (title, spec_id, custom_prompt, utcnow_iso(), chat_id),
+        "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, "
+        "use_tools = ?, enable_thinking = ?, updated_at = ? WHERE id = ?",
+        (title, spec_id, custom_prompt, use_tools, enable_thinking,
+         utcnow_iso(), chat_id),
     )
     await db.commit()
     return dict(await _get_own_chat(db, chat_id, user["id"]))

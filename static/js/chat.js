@@ -87,6 +87,12 @@ export function initChat(toast) {
   });
   els.stopBtn.addEventListener("click", () => streams.get(activeChatId)?.ac.abort());
 
+  // Тумблеры «Заметки/Календарь» и «Размышления» — свои у каждого чата
+  els.ctxTools.addEventListener("change",
+    () => saveChatToggle("use_tools", els.ctxTools.checked));
+  els.ctxThink.addEventListener("change",
+    () => saveChatToggle("enable_thinking", els.ctxThink.checked));
+
   // Отслеживаем, у нижней ли границы бегунок. Если пользователь поднял его —
   // отключаем автоскролл, пока сам не вернётся вниз.
   els.messages.addEventListener("scroll", () => {
@@ -160,6 +166,28 @@ async function loadSpecializations() {
 
 function activeChat() {
   return chats.find((c) => c.id === activeChatId) || null;
+}
+
+// Пер-чатовые тумблеры: состояние хранится в чате (chats.use_tools /
+// chats.enable_thinking) и применяется при каждом переключении чата.
+function applyChatToggles() {
+  const chat = activeChat();
+  if (!chat) return;
+  els.ctxTools.checked = Boolean(chat.use_tools);
+  els.ctxThink.checked = Boolean(chat.enable_thinking);
+}
+
+async function saveChatToggle(field, value) {
+  const chat = activeChat();
+  if (!chat) return;
+  chat[field] = value ? 1 : 0; // оптимистично, чтобы UI не мигал
+  try {
+    const updated = await api(`/api/chats/${chat.id}`, { method: "PUT",
+      body: { [field]: value } });
+    Object.assign(chat, updated);
+  } catch (e) {
+    els.toast(e.detail || "Не удалось сохранить настройку чата", true);
+  }
 }
 
 function updatePromptButton() {
@@ -300,6 +328,7 @@ async function refreshChats() {
     await loadMessages();
   }
   renderChatList();
+  applyChatToggles();
   updateInputState();
 }
 
@@ -354,6 +383,7 @@ async function selectChat(id) {
     renderLive(st);
   }
   showStats(st ? st.statsData : null);
+  applyChatToggles();
   updateInputState();
   scrollToBottom(true);  // при переключении чата — принудительно вниз
 }

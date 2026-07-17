@@ -215,3 +215,26 @@ def test_enable_thinking_default_true(client, ctrl_user):
     chat_id = client.post("/api/chats", json={}).json()["id"]
     events = _send(client, chat_id, "привет")
     assert len([d for e, d in events if e == "reasoning"]) > 0
+
+
+# --- Пер-чатовые тумблеры (use_tools / enable_thinking) ---
+
+def test_chat_toggles_persisted(client, ctrl_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    # дефолты: оба включены
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["use_tools"] == 1 and chat["enable_thinking"] == 1
+
+    r = client.put(f"/api/chats/{chat_id}",
+                   json={"use_tools": False, "enable_thinking": False})
+    assert r.status_code == 200
+    assert r.json()["use_tools"] == 0 and r.json()["enable_thinking"] == 0
+
+    # состояние пережило «перезагрузку страницы» (новый GET списка)
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["use_tools"] == 0 and chat["enable_thinking"] == 0
+
+    # частичное обновление другого поля не сбрасывает тумблеры
+    client.put(f"/api/chats/{chat_id}", json={"title": "Переименован"})
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["use_tools"] == 0 and chat["enable_thinking"] == 0
