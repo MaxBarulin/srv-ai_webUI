@@ -1,6 +1,8 @@
 """FastAPI application: routing, static files, security middleware."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -24,7 +26,13 @@ MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Политика хранения (CHAT_RETENTION_DAYS): чистим при старте и раз в сутки
+    from app.retention import retention_loop
+    task = asyncio.create_task(retention_loop())
     yield
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 app = FastAPI(title="srv-ai webUI", lifespan=lifespan)

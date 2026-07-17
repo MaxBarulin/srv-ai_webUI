@@ -176,8 +176,40 @@ async def _seed_defaults(db: aiosqlite.Connection) -> None:
                 "INSERT INTO chat_examples (text, sort_order) VALUES (?, ?)", (text, order))
 
 
+# --- Опциональное шифрование БД (SQLCipher, ключ DB_KEY в .env) ---
+# Стандартный sqlite3 не шифрует: PRAGMA key он молча игнорирует, и файл
+# остался бы открытым. Поэтому при заданном DB_KEY подменяем драйвер aiosqlite
+# на sqlcipher3 (пакет sqlcipher3-binary) и падаем с понятной ошибкой, если
+# он не установлен, — тихая деградация до нешифрованной БД недопустима.
+_cipher_ready = False
+
+
+def _ensure_cipher_driver() -> None:
+    global _cipher_ready
+    if _cipher_ready or not settings.db_key:
+        return
+    try:
+        import sqlcipher3  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "DB_KEY задан, но пакет sqlcipher3 не установлен — БД не будет "
+            "зашифрована. Установите sqlcipher3-binary (pip install "
+            "sqlcipher3-binary) или уберите DB_KEY из .env.") from exc
+    import aiosqlite.core
+    aiosqlite.core.sqlite3 = sqlcipher3
+    _cipher_ready = True
+
+
+async def _apply_key(db: aiosqlite.Connection) -> None:
+    if settings.db_key:
+        escaped = settings.db_key.replace("'", "''")
+        await db.execute(f"PRAGMA key = '{escaped}'")
+
+
 async def init_db() -> None:
+    _ensure_cipher_driver()
     async with aiosqlite.connect(settings.db_path) as db:
+        await _apply_key(db)
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         await _run_column_migrations(db)
@@ -187,8 +219,10 @@ async def init_db() -> None:
 
 @contextlib.asynccontextmanager
 async def get_connection() -> AsyncIterator[aiosqlite.Connection]:
+    _ensure_cipher_driver()
     async with aiosqlite.connect(settings.db_path) as db:
         db.row_factory = aiosqlite.Row
+        await _apply_key(db)
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("PRAGMA busy_timeout = 5000")
         yield db

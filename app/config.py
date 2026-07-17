@@ -62,6 +62,8 @@ class Settings:
     vision_max_pages: int
     pii_filter: bool
     pii_whitelist_file: str
+    db_key: str
+    chat_retention_days: int
 
     @property
     def db_path(self) -> Path:
@@ -91,6 +93,8 @@ def load_settings() -> Settings:
         vision_max_pages=_get_int("VISION_MAX_PAGES", 10),
         pii_filter=_get_bool("PII_FILTER", False),
         pii_whitelist_file=_get("PII_WHITELIST_FILE", ""),
+        db_key=_get("DB_KEY", "").strip(),
+        chat_retention_days=_get_int("CHAT_RETENTION_DAYS", 0),
     )
 
 
