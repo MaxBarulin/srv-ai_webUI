@@ -720,6 +720,45 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 
+/* Живой ответ: мигающий курсор у последней строки генерации */
+.msg.streaming .msg-body::after {
+  content: "▍";
+  color: var(--osk-red);
+  margin-left: 2px;
+  animation: cursor-blink 1s steps(2, start) infinite;
+}
+@keyframes cursor-blink { to { visibility: hidden; } }
+/* Пустое тело (фаза размышлений) — спиннер вместо курсора */
+.msg.streaming .msg-body:empty::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--osk-line);
+  border-top-color: var(--osk-red);
+  border-radius: 50%;
+  animation: chat-spin 0.7s linear infinite;
+}
+
+/* Фаза размышлений: шиммер («блик» слева направо) по заголовку блока,
+   в самом заголовке — живая выписка последней строчки размышлений */
+.reasoning.thinking summary {
+  background: linear-gradient(90deg,
+    var(--osk-slate) 0%, var(--osk-slate) 35%,
+    var(--osk-red) 50%,
+    var(--osk-slate) 65%, var(--osk-slate) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: think-shimmer 1.6s linear infinite;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+@keyframes think-shimmer { from { background-position: 200% 0; } to { background-position: 0% 0; } }
+
 /* Панель статуса над строкой ввода (как в llama.cpp): статистика + действия */
 .chat-status {
   display: flex;

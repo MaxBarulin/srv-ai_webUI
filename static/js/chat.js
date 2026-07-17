@@ -42,6 +42,7 @@ export function initChat(toast) {
   els.ctxTools = $("ctx-tools");
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
+  els.ctxThink = $("ctx-think");
   els.spec = $("chat-spec");
   els.examples = $("chat-examples");
   els.attachBtn = $("chat-attach-btn");
@@ -572,16 +573,39 @@ function updateInputState() {
 // Перерисовать живой ответ стрима в его DOM-узел (узел может быть откреплён,
 // если пользователь в другом чате — тогда просто обновляем в памяти).
 function renderLive(st, scroll = false) {
+  // Пока идёт стрим — контейнер помечен .streaming (мигающий курсор у
+  // последней строки, спиннер в блоке «Размышления»).
+  st.live.classList.add("streaming");
   if (st.reasoningText) {
     st.liveReasoning.hidden = false;
     const rb = st.liveReasoning.querySelector(".reasoning-body");
     rb.textContent = st.reasoningText;
+    // Фаза размышлений (контент ещё не пошёл): шиммер по заголовку +
+    // «живая выписка» — последняя строчка размышлений прямо в summary.
+    const summary = st.liveReasoning.querySelector("summary");
+    if (!st.contentText) {
+      st.liveReasoning.classList.add("thinking");
+      const lines = st.reasoningText.trimEnd().split("\n");
+      const tail = (lines[lines.length - 1] || "").trim().slice(-90);
+      summary.textContent = tail ? `Размышления · ${tail}` : "Размышления";
+    } else {
+      st.liveReasoning.classList.remove("thinking");
+      summary.textContent = "Размышления";
+    }
     // Sticky-скролл для окна «Размышлений» тоже per-stream: пока пользователь
     // не поднял бегунок внутри блока — тянемся за новой строкой.
     if (st.reasoningFollow) stickToBottom(rb);
   }
   st.liveBody.innerHTML = renderMarkdown(st.contentText);
   if (scroll && st.chatId === activeChatId) scrollToBottom();
+}
+
+// Снять индикаторы стрима с живого контейнера (конец генерации/ошибка)
+function finishLive(st) {
+  st.live.classList.remove("streaming");
+  st.liveReasoning.classList.remove("thinking");
+  const summary = st.liveReasoning.querySelector("summary");
+  if (summary) summary.textContent = "Размышления";
 }
 
 // Панель статистики над строкой ввода (счётчики сервера, как в llama.cpp)
@@ -664,6 +688,7 @@ async function continueGeneration() {
     if (e.name !== "AbortError") els.toast(e.message || "Не удалось продолжить", true);
   } finally {
     streams.delete(chatId);
+    finishLive(st);
     live.remove();
     renderChatList();
     // Продолжение дописано к сообщению в БД — перечитываем историю целиком
@@ -767,6 +792,7 @@ async function sendMessage() {
         content,
         use_tools: els.ctxTools.checked,
         use_rag: !els.ctxRagLabel.hidden && els.ctxRag.checked,
+        enable_thinking: els.ctxThink.checked,
         attachments: attachments.map((a) => ({
           filename: a.filename, text: a.text || "", images: a.images || [],
         })),
@@ -845,6 +871,7 @@ async function sendMessage() {
     }
   } finally {
     streams.delete(chatId);
+    finishLive(st);
     const empty = !st.reasoningText && !st.contentText
       && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip");
     if (empty) live.remove();
