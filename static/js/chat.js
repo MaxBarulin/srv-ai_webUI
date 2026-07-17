@@ -12,6 +12,17 @@ const streams = new Map();
 let pendingAttachments = []; // разобранные вложения для следующего сообщения
 let specializations = [];    // кэш активных специализаций (для селектов)
 
+// Sticky-скролл: следуем за новой строкой генерации, только если пользователь
+// сам не поднял бегунок вверх — тогда фиксируем позицию и не «дёргаем» его.
+const STICKY_THRESHOLD = 40;
+let messagesFollow = true;
+function isAtBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICKY_THRESHOLD;
+}
+function stickToBottom(el) {
+  el.scrollTop = el.scrollHeight;
+}
+
 function isStreaming(chatId) { return chatId !== null && streams.has(chatId); }
 
 const els = {};
@@ -74,6 +85,12 @@ export function initChat(toast) {
     }
   });
   els.stopBtn.addEventListener("click", () => streams.get(activeChatId)?.ac.abort());
+
+  // Отслеживаем, у нижней ли границы бегунок. Если пользователь поднял его —
+  // отключаем автоскролл, пока сам не вернётся вниз.
+  els.messages.addEventListener("scroll", () => {
+    messagesFollow = isAtBottom(els.messages);
+  });
 
   // Кнопки «Копировать» в блоках кода (инлайн-обработчики запрещены CSP)
   els.messages.addEventListener("click", (e) => {
@@ -337,7 +354,7 @@ async function selectChat(id) {
   }
   showStats(st ? st.statsData : null);
   updateInputState();
-  scrollToBottom();
+  scrollToBottom(true);  // при переключении чата — принудительно вниз
 }
 
 async function createChat() {
@@ -346,6 +363,7 @@ async function createChat() {
   const chat = await api("/api/chats", { method: "POST", body });
   activeChatId = chat.id;
   els.messages.replaceChildren(); // новый чат пуст — убрать сообщения предыдущего
+  messagesFollow = true;          // сброс sticky для нового пустого чата
   showStats(null);
   await refreshChats();
   els.input.focus();
@@ -378,8 +396,11 @@ async function deleteChat(chat) {
 
 // --- Сообщения ---
 
-function scrollToBottom() {
-  els.messages.scrollTop = els.messages.scrollHeight;
+// force=true (загрузка чата, отправка нового сообщения) — принудительно вниз
+// и сбрасываем sticky-состояние; force=false (тик стрима) — только если следим.
+function scrollToBottom(force = false) {
+  if (force) messagesFollow = true;
+  if (messagesFollow) stickToBottom(els.messages);
 }
 
 function reasoningBlock(text, open = false) {
@@ -529,7 +550,7 @@ async function loadMessages() {
   if (activeChatId === null) return;
   const messages = await api(`/api/chats/${activeChatId}/messages`);
   els.messages.replaceChildren(...messages.map(messageNode));
-  scrollToBottom();
+  scrollToBottom(true);  // после перерисовки истории — принудительно вниз
 }
 
 function updateInputState() {
@@ -553,7 +574,11 @@ function updateInputState() {
 function renderLive(st, scroll = false) {
   if (st.reasoningText) {
     st.liveReasoning.hidden = false;
-    st.liveReasoning.querySelector(".reasoning-body").textContent = st.reasoningText;
+    const rb = st.liveReasoning.querySelector(".reasoning-body");
+    rb.textContent = st.reasoningText;
+    // Sticky-скролл для окна «Размышлений» тоже per-stream: пока пользователь
+    // не поднял бегунок внутри блока — тянемся за новой строкой.
+    if (st.reasoningFollow) stickToBottom(rb);
   }
   st.liveBody.innerHTML = renderMarkdown(st.contentText);
   if (scroll && st.chatId === activeChatId) scrollToBottom();
@@ -595,7 +620,11 @@ async function continueGeneration() {
   const st = {
     chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
     reasoningText: "", contentText: "", messageId: null, statsData: null,
+    reasoningFollow: true,
   };
+  liveReasoning.querySelector(".reasoning-body").addEventListener("scroll", (e) => {
+    st.reasoningFollow = isAtBottom(e.currentTarget);
+  });
   streams.set(chatId, st);
   updateInputState();
   renderChatList();
@@ -699,7 +728,8 @@ async function sendMessage() {
       ? { filename: a.filename, image: true }
       : { filename: a.filename, text: a.text || "" })),
   }));
-  scrollToBottom();
+  // Пользователь отправил сообщение — прыгаем вниз и снова следим за стримом.
+  scrollToBottom(true);
 
   // Живой контейнер ответа
   const live = document.createElement("div");
@@ -719,7 +749,11 @@ async function sendMessage() {
   const st = {
     chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
     reasoningText: "", contentText: "", messageId: null, statsData: null,
+    reasoningFollow: true,
   };
+  liveReasoning.querySelector(".reasoning-body").addEventListener("scroll", (e) => {
+    st.reasoningFollow = isAtBottom(e.currentTarget);
+  });
   streams.set(chatId, st);
   updateInputState();
   renderChatList(); // показать индикатор генерации в списке
