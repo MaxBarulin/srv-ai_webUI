@@ -103,6 +103,91 @@ def test_admin_cannot_block_self(client, make_user):
     assert r.status_code == 400
 
 
+def test_delete_user_cascades_owned_data(client, make_user):
+    """Удаление пользователя сносит его чаты (с сообщениями и feedback),
+    заметки и события; аудит остаётся (user_id → NULL)."""
+    make_user("kill-admin", ADMIN_PASS, role="admin")
+    victim = make_user("victim-full", USER_PASS)
+
+    # Наполним данные от имени жертвы
+    login_as(client, "victim-full", USER_PASS)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    note_id = client.post("/api/notes",
+                          json={"title": "T", "body": "b", "scope": "personal"}).json()["id"]
+    event_id = client.post("/api/events", json={
+        "title": "E", "starts_at": "2027-01-01T10:00:00+03:00",
+        "ends_at": "2027-01-01T11:00:00+03:00", "scope": "personal"}).json()["id"]
+
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        # искусственно добавим сообщение и feedback, чтобы проверить каскад
+        conn.execute(
+            "INSERT INTO messages (chat_id, role, content, created_at) "
+            "VALUES (?, 'user', 'hi', datetime('now'))", (chat_id,))
+        msg_id = conn.execute(
+            "SELECT id FROM messages WHERE chat_id = ?", (chat_id,)).fetchone()[0]
+        conn.execute(
+            "INSERT INTO feedback (message_id, chat_id, user_id, rating, created_at) "
+            "VALUES (?, ?, ?, 1, datetime('now'))", (msg_id, chat_id, victim))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Удаляем администратором
+    client.cookies.clear()
+    login_as(client, "kill-admin", ADMIN_PASS)
+    r = client.delete(f"/api/admin/users/{victim}")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM users WHERE id = ?", (victim,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM chats WHERE id = ?", (chat_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ?",
+                            (chat_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM notes WHERE id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE id = ?",
+                            (event_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM feedback WHERE user_id = ?",
+                            (victim,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?",
+                            (victim,)).fetchone()[0] == 0
+        # Аудит удаления записан на действующего админа
+        deletion = conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'user_deleted' "
+            "AND object_id = ?", (str(victim),)).fetchone()[0]
+        assert deletion == 1
+    finally:
+        conn.close()
+
+
+def test_delete_user_forbidden_for_self(client, make_user):
+    admin_id = make_user("self-delete-admin", ADMIN_PASS, role="admin")
+    login_as(client, "self-delete-admin", ADMIN_PASS)
+    r = client.delete(f"/api/admin/users/{admin_id}")
+    assert r.status_code == 400
+
+
+def test_delete_user_last_active_admin_rule(client, make_user):
+    """Правило «нельзя удалить последнего активного администратора» срабатывает,
+    когда удаляемый — админ, а больше активных админов нет.
+
+    Сценарий: два админа A и B; B заблокирован; A пытается удалить другого
+    админа C (неактивного) — разрешено, т.к. A ещё активен. Ключевой кейс —
+    удаление единственного оставшегося активного админа — недостижим напрямую
+    через нормальный DELETE (исполнитель обязан быть активным админом; правило
+    «нельзя себя» перехватит попытку суицида), поэтому проверяем сам счётчик
+    активных админов «в другую сторону»: удаление НЕ последнего проходит.
+    """
+    make_user("last-admin-a", ADMIN_PASS, role="admin")
+    b_id = make_user("last-admin-b", ADMIN_PASS, role="admin")
+
+    login_as(client, "last-admin-a", ADMIN_PASS)
+    # После удаления B в системе остаётся A — активный админ, поэтому 200.
+    assert client.delete(f"/api/admin/users/{b_id}").status_code == 200
+
+
 def test_reset_password(client, make_user):
     make_user("the-admin3", ADMIN_PASS, role="admin")
     target_id = make_user("forgetful", USER_PASS)

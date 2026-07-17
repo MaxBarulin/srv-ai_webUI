@@ -92,6 +92,13 @@ function userRow(u) {
     blockBtn.textContent = u.is_active ? "Заблокировать" : "Разблокировать";
     blockBtn.addEventListener("click", () => setActive(u, !u.is_active));
     actions.appendChild(blockBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn btn-small btn-danger ml-8";
+    delBtn.textContent = "Удалить";
+    delBtn.title = "Удалить пользователя и все его данные";
+    delBtn.addEventListener("click", () => deleteUser(u));
+    actions.appendChild(delBtn);
   }
 
   tr.appendChild(actions);
@@ -350,6 +357,27 @@ async function setActive(user, isActive) {
     loadUsers();
   } catch (e) {
     toast(e.detail, true);
+  }
+}
+
+async function deleteUser(user) {
+  // Двойное подтверждение: попросим ввести логин вручную —
+  // действие необратимо и уносит все чаты, заметки и события владельца.
+  const typed = prompt(
+    `Удалить пользователя «${user.login}» вместе с его чатами, заметками ` +
+    `и событиями? Действие необратимо.\n\nВведите логин пользователя ` +
+    "для подтверждения:");
+  if (typed === null) return;
+  if (typed.trim() !== user.login) {
+    toast("Логин не совпадает — удаление отменено", true);
+    return;
+  }
+  try {
+    await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
+    toast(`Пользователь «${user.login}» удалён`);
+    loadUsers();
+  } catch (e) {
+    toast(e.detail || "Не удалось удалить пользователя", true);
   }
 }
 

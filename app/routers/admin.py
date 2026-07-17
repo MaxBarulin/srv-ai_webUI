@@ -109,6 +109,53 @@ async def set_user_active(
     return dict(await _get_user_or_404(db, user_id))
 
 
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    row = await _get_user_or_404(db, user_id)
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
+    if row["role"] == "admin":
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1 AND id <> ?",
+            (user_id,))
+        if (await cursor.fetchone())[0] == 0:
+            raise HTTPException(status_code=400,
+                                detail="Нельзя удалить последнего активного администратора")
+
+    # Каскад: всё, что владелец создал в системе. audit_log сохраняем, но
+    # обнуляем ссылку — история действий не теряется.
+    # Порядок важен: сначала зависимые таблицы (FK enforcement).
+    await db.execute(
+        "DELETE FROM feedback WHERE user_id = ? "
+        "OR chat_id IN (SELECT id FROM chats WHERE user_id = ?) "
+        "OR message_id IN (SELECT m.id FROM messages m "
+        "  JOIN chats c ON c.id = m.chat_id WHERE c.user_id = ?)",
+        (user_id, user_id, user_id))
+    await db.execute(
+        "DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE user_id = ?)",
+        (user_id,))
+    await db.execute("DELETE FROM chats WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM notes WHERE owner_id = ?", (user_id,))
+    await db.execute("DELETE FROM events WHERE owner_id = ?", (user_id,))
+    await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    await db.execute("UPDATE notes SET updated_by = NULL WHERE updated_by = ?", (user_id,))
+    await db.execute("UPDATE events SET updated_by = NULL WHERE updated_by = ?", (user_id,))
+    await db.execute("UPDATE audit_log SET user_id = NULL WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+
+    await write_audit(db, user_id=admin["id"], action="user_deleted",
+                      object_type="user", object_id=str(user_id),
+                      details=f"login={row['login']}, role={row['role']}",
+                      ip=client_ip(request))
+    return {"ok": True}
+
+
 @router.post("/users/{user_id}/password")
 async def reset_user_password(
     user_id: int,
