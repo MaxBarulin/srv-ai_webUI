@@ -86,9 +86,13 @@ async def chat_completions(request: Request):
             return "data: " + json.dumps(
                 {"choices": [{"delta": delta}]}, ensure_ascii=False) + "\n\n"
 
-        for text in REASONING_CHUNKS:
-            yield chunk({"reasoning_content": text})
-            await asyncio.sleep(2.0 if slow else 0.01)
+        # enable_thinking=False (chat_template_kwargs, как Qwen3 в llama.cpp) —
+        # модель отвечает без блока размышлений
+        thinking = (body.get("chat_template_kwargs") or {}).get("enable_thinking", True)
+        if thinking is not False:
+            for text in REASONING_CHUNKS:
+                yield chunk({"reasoning_content": text})
+                await asyncio.sleep(2.0 if slow else 0.01)
 
         if emit_tool_call:
             name, args = trigger

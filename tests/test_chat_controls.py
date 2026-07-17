@@ -197,3 +197,21 @@ def test_delete_message_foreign_chat_404(client, make_user, ctrl_user):
     make_user("ctrl-intruder2", PASS)
     login_as(client, "ctrl-intruder2", PASS)
     assert client.delete(f"/api/chats/{chat_id}/messages/{msg['id']}").status_code == 404
+
+# --- Переключатель «Размышления» (enable_thinking) ---
+
+def test_enable_thinking_false_suppresses_reasoning(client, ctrl_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages",
+                    json={"content": "привет", "use_tools": False,
+                          "enable_thinking": False})
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert [d for e, d in events if e == "reasoning"] == []
+    assert any(e == "content" for e, _ in events)
+
+
+def test_enable_thinking_default_true(client, ctrl_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    events = _send(client, chat_id, "привет")
+    assert len([d for e, d in events if e == "reasoning"]) > 0

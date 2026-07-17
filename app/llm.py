@@ -137,7 +137,8 @@ def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
 
 
 async def stream_chat(
-    messages: list[dict], tools: list[dict] | None = None
+    messages: list[dict], tools: list[dict] | None = None,
+    enable_thinking: bool = True,
 ) -> AsyncIterator[tuple[str, str]]:
     """Yield ("reasoning" | "content", delta_text) from a streaming completion.
 
@@ -156,6 +157,9 @@ async def stream_chat(
     }
     if tools:
         payload["tools"] = tools
+    if not enable_thinking:
+        # Qwen3 + llama.cpp (--jinja): выключение thinking через шаблон чата
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     tool_calls: dict[int, dict] = {}
     stats: dict = {}
     try:

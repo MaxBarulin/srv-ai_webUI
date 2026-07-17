@@ -62,6 +62,7 @@ class SendMessageRequest(BaseModel):
     content: str
     use_tools: bool = True  # переключатель «Заметки/Календарь» в шапке чата (§4)
     use_rag: bool = False   # переключатель «База знаний» (§8)
+    enable_thinking: bool = True  # переключатель «Размышления» (thinking-режим)
     attachments: list[Attachment] = []
 
 
@@ -522,7 +523,8 @@ async def send_message(
                 held: list[str] = []      # придержанный контент (возможный fallback-JSON)
                 holding = tools is not None
                 tool_calls = None
-                async for kind, text in stream_chat(msgs, tools=tools):
+                async for kind, text in stream_chat(
+                        msgs, tools=tools, enable_thinking=payload.enable_thinking):
                     if kind == "reasoning":
                         reasoning_parts.append(text)
                         yield _sse("reasoning", {"text": text})

@@ -69,7 +69,7 @@ def test_rag_context_inserted_and_sources_shown(client, rag_user, monkeypatch):
     captured: list[list[dict]] = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 

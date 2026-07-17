@@ -66,7 +66,7 @@ def test_chat_uses_specialization_prompt(client, ergo_user, monkeypatch):
     captured = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 
@@ -93,7 +93,7 @@ def _spy_llm(monkeypatch):
     captured = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 

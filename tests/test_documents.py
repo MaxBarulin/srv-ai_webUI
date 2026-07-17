@@ -240,7 +240,7 @@ def test_chat_message_with_document_text(client, doc_user, monkeypatch):
     captured = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 
@@ -277,7 +277,7 @@ def test_chat_message_with_image_multimodal(client, doc_user, monkeypatch):
     captured = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 

@@ -132,7 +132,7 @@ def test_chat_masks_before_llm_and_storage(client, pii_chat, monkeypatch):
     captured = []
     orig = llm_module.stream_chat
 
-    def spy(messages, tools=None):
+    def spy(messages, tools=None, **kwargs):
         captured.append(messages)
         return orig(messages, tools=tools)
 
