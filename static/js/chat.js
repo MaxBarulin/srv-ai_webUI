@@ -25,6 +25,36 @@ function stickToBottom(el) {
 
 function isStreaming(chatId) { return chatId !== null && streams.has(chatId); }
 
+// Копирование в буфер. navigator.clipboard доступен только в secure context
+// (HTTPS или localhost) — при доступе по http://<ip> его нет, поэтому фолбэк
+// через скрытую textarea + execCommand("copy").
+async function copyText(text) {
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* пробуем фолбэк */ }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { /* не судьба */ }
+  ta.remove();
+  return ok;
+}
+
+// Общая обратная связь на кнопке: «Скопировано» или «Ошибка», затем возврат
+function copyWithFeedback(btn, text, label = "Копировать") {
+  copyText(text).then((ok) => {
+    btn.textContent = ok ? "Скопировано" : "Не удалось";
+    setTimeout(() => { btn.textContent = label; }, 1500);
+  });
+}
+
 const els = {};
 
 function $(id) { return document.getElementById(id); }
@@ -104,10 +134,7 @@ export function initChat(toast) {
     const btn = e.target.closest(".code-copy");
     if (!btn) return;
     const code = btn.parentElement.querySelector("code")?.textContent ?? "";
-    navigator.clipboard.writeText(code).then(() => {
-      btn.textContent = "Скопировано";
-      setTimeout(() => { btn.textContent = "Копировать"; }, 1500);
-    });
+    copyWithFeedback(btn, code);
   });
 
   // Кнопки обратной связи 👍/👎 (§15)
@@ -504,12 +531,7 @@ function answerActions(rating, getRaw, bodyEl) {
   copyBtn.className = "msg-action";
   copyBtn.textContent = "Копировать";
   copyBtn.title = "Скопировать весь ответ (markdown)";
-  copyBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(getRaw()).then(() => {
-      copyBtn.textContent = "Скопировано";
-      setTimeout(() => { copyBtn.textContent = "Копировать"; }, 1500);
-    });
-  });
+  copyBtn.addEventListener("click", () => copyWithFeedback(copyBtn, getRaw()));
   bar.appendChild(copyBtn);
 
   const rawBtn = document.createElement("button");
