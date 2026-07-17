@@ -61,6 +61,66 @@ def make_client() -> httpx.AsyncClient:
     )
 
 
+# Кэш n_ctx самого сервера (см. get_server_context_size). Проинициализируется
+# при первом успешном ответе llama.cpp; None означает «неизвестно».
+_server_ctx_cache: int | None = None
+_server_ctx_probed: bool = False
+
+
+def _root_url() -> str:
+    """base_url без хвостового `/v1` — llama.cpp кладёт /props и /health в корень."""
+    base = settings.llm_base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    return base
+
+
+async def get_server_context_size() -> int | None:
+    """Реальный n_ctx запущенного llama.cpp (из /props). Кэшируется.
+
+    llama.cpp свой web UI считает «контекст: X%» именно от этого значения.
+    Если сервер не отдал /props или поле — возвращаем None; вызывающий
+    может откатиться к LLM_CONTEXT_SIZE из .env.
+    """
+    global _server_ctx_cache, _server_ctx_probed
+    if _server_ctx_probed:
+        return _server_ctx_cache
+    _server_ctx_probed = True
+    headers = {"Authorization": f"Bearer {settings.llm_api_key}"} if settings.llm_api_key else {}
+    try:
+        async with httpx.AsyncClient(
+            base_url=_root_url(),
+            headers=headers,
+            timeout=httpx.Timeout(5.0, connect=3.0),
+            transport=_transport,
+        ) as client:
+            r = await client.get("/props")
+            if r.status_code != 200:
+                return None
+            data = r.json()
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError):
+        return None
+    for path in (("default_generation_settings", "n_ctx"), ("n_ctx",)):
+        node: object = data
+        for key in path:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                node = None
+                break
+        if isinstance(node, int) and node > 0:
+            _server_ctx_cache = node
+            return node
+    return None
+
+
+def _reset_server_ctx_cache_for_tests() -> None:
+    """Только для тестов: сбросить кэш, чтобы очередной вызов снова опросил /props."""
+    global _server_ctx_cache, _server_ctx_probed
+    _server_ctx_cache = None
+    _server_ctx_probed = False
+
+
 def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
     """Собрать стриминговые дельты tool_calls (OpenAI формат) по индексам."""
     for tc in deltas:

@@ -15,7 +15,7 @@ from app.audit import utcnow_iso
 from app.auth import client_ip, get_current_user
 from app.config import settings
 from app.db import get_connection, get_db
-from app.llm import LLMError, build_system_prompt, stream_chat
+from app.llm import LLMError, build_system_prompt, get_server_context_size, stream_chat
 from app.metrics import metrics
 from app.pii import mask_text
 from app.queue import QueueTimeout, llm_queue
@@ -472,10 +472,16 @@ async def send_message(
         had_error = False
         gen_start = None
         msgs = list(llm_messages)
-        # Счётчики сервера (llama.cpp usage/timings) — суммируются по итерациям цикла
+        # Счётчики сервера (llama.cpp usage/timings). total_completion —
+        # для скорости и метрик (сумма реально сгенерированных токенов за все
+        # итерации цикла tool calling). last_prompt_tokens и last_completion —
+        # для «контекста» в KV-кэше после последней итерации: они уже включают
+        # в себя все предыдущие ответы этого turn'а (сервер их получил и
+        # тонизировал сам), поэтому суммировать completion ещё раз нельзя.
         total_completion = 0
         total_gen_seconds = 0.0
         last_prompt_tokens = 0
+        last_completion_tokens = 0
         server_stats_seen = False
         ticket = llm_queue.enqueue()
         try:
@@ -537,6 +543,7 @@ async def send_message(
                         server_stats_seen = True
                         completion = step_stats.get("completion_tokens", 0)
                         total_completion += completion
+                        last_completion_tokens = completion
                         last_prompt_tokens = step_stats.get("prompt_tokens", last_prompt_tokens)
                         tps = step_stats.get("tokens_per_second", 0)
                         if completion and tps:
@@ -603,15 +610,21 @@ async def send_message(
                     saved_id = await asyncio.shield(save)
             if finished:
                 if server_stats_seen:
-                    context_used = last_prompt_tokens + total_completion
+                    # KV-кэш после turn'а = prompt последней итерации
+                    # (уже включает всю историю turn'а) + completion этой же
+                    # итерации. Суммировать completion по итерациям НЕЛЬЗЯ —
+                    # промежуточные ответы уже учтены в prompt_tokens.
+                    context_used = last_prompt_tokens + last_completion_tokens
+                    context_size = (await get_server_context_size()
+                                    or settings.llm_context_size)
                     stats_payload = {
                         "completion_tokens": total_completion,
                         "tokens_per_second": round(total_completion / total_gen_seconds, 1)
                         if total_gen_seconds else 0,
                         "context_used": context_used,
-                        "context_size": settings.llm_context_size,
-                        "context_percent": round(context_used / settings.llm_context_size * 100)
-                        if settings.llm_context_size else None,
+                        "context_size": context_size,
+                        "context_percent": round(context_used / context_size * 100)
+                        if context_size else None,
                     }
                     yield _sse("stats", stats_payload)
                 yield _sse("done", {"message_id": saved_id, "title": auto_title})
@@ -727,15 +740,20 @@ async def continue_generation(
                     await asyncio.shield(save)
             if finished:
                 if server_stats_seen:
+                    # В continue-режиме одна итерация — тут total_completion
+                    # и есть completion этой итерации, так что формула
+                    # prompt + completion (KV после генерации) корректна.
                     context_used = last_prompt_tokens + total_completion
+                    context_size = (await get_server_context_size()
+                                    or settings.llm_context_size)
                     yield _sse("stats", {
                         "completion_tokens": total_completion,
                         "tokens_per_second": round(total_completion / total_gen_seconds, 1)
                         if total_gen_seconds else 0,
                         "context_used": context_used,
-                        "context_size": settings.llm_context_size,
-                        "context_percent": round(context_used / settings.llm_context_size * 100)
-                        if settings.llm_context_size else None,
+                        "context_size": context_size,
+                        "context_percent": round(context_used / context_size * 100)
+                        if context_size else None,
                     })
                 yield _sse("done", {"message_id": message_id, "title": None})
 

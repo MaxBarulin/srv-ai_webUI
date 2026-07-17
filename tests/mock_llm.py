@@ -57,6 +57,12 @@ def _find_trigger(last_user: str) -> tuple[str, dict] | None:
     return None
 
 
+@app.get("/props")
+async def props():
+    """llama.cpp-совместимый /props: реальный n_ctx запущенного сервера."""
+    return {"default_generation_settings": {"n_ctx": 8192}, "total_slots": 1}
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
