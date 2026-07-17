@@ -1184,15 +1184,3 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 
 /* Формулы KaTeX: широкие — скролл внутри блока */
 .msg-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
-
-/* Расширенный markdown (marked + DOMPurify): элементы в стиле Obsidian */
-.msg-body a { color: var(--osk-red-dark); text-decoration: underline; }
-.msg-body a:hover { color: var(--osk-red); }
-.msg-body mark { background: #FFE9A8; padding: 0 3px; }
-.msg-body del, .msg-body s { color: var(--osk-slate); }
-.msg-body ul ul, .msg-body ol ol, .msg-body ul ol, .msg-body ol ul { margin: 3px 0; }
-.msg-body li > input[type="checkbox"] { margin-right: 6px; vertical-align: -1px; }
-.msg-body li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
-.msg-body img { max-width: 100%; }
-.msg-body blockquote blockquote { margin: 6px 0; }
-.msg-body summary { cursor: pointer; }
