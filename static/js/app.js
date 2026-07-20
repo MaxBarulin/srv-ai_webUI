@@ -38,6 +38,8 @@ function showSection(name) {
   });
   document.getElementById("page-title").textContent = SECTIONS[name];
   document.querySelector(".content").classList.toggle("content-full", name !== "admin");
+  // В чате шапка скрыта — колонка чата до самого верха окна
+  document.querySelector(".main").classList.toggle("no-topbar", name === "chat");
   if (name === "admin") loadUsers();
   window.dispatchEvent(new CustomEvent("section-shown", { detail: name }));
 }

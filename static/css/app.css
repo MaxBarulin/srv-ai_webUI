@@ -234,6 +234,22 @@ input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -
   width: 4px;
   background: var(--osk-red);
 }
+/* Блок пользователя внизу сайдбара (Профиль/Выйти) */
+.sidebar-user {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  color: #C7CDD2;
+}
+.sidebar-user b { display: block; margin-bottom: 8px; font-weight: 700; color: #fff; }
+.sidebar-user-actions { display: flex; gap: 8px; }
+.btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #C7CDD2;
+}
+.btn-ghost:hover { border-color: #fff; color: #fff; background: rgba(255, 255, 255, 0.06); }
+
 .sidebar .footer {
   padding: 14px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -263,6 +279,10 @@ input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -
 .topbar .user b { color: var(--osk-dark); font-weight: 700; }
 
 .content { padding: 28px; flex: 1; min-height: 0; overflow-y: auto; }
+
+/* В разделе «Чат» шапка скрыта — чат занимает всю высоту окна */
+.main.no-topbar .topbar { display: none; }
+.main.no-topbar .content.content-full { height: 100vh; }
 
 /* --- Заглушки разделов в разработке --- */
 .placeholder {
@@ -393,6 +413,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 
 .chat-main {
+  position: relative; /* якорь для выезжающей панели .chat-options */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -435,21 +456,81 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-note { margin-top: 6px; font-size: 12px; color: var(--osk-slate); font-style: italic; }
 .msg-note.msg-error { color: var(--osk-red-dark); font-style: normal; }
 
-/* Переключатели контекста в шапке чата (§4) */
-.chat-context {
-  display: flex;
-  gap: 18px;
-  align-items: center;
-  padding: 8px 24px;
+/* Панель «Параметры чата» — выезжает справа по ⚙ (§4) */
+.chat-options {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 280px;
+  z-index: 5;
   background: var(--osk-paper);
-  border-bottom: 1px solid var(--osk-line);
+  border-left: 1px solid var(--osk-line);
+  box-shadow: -8px 0 22px rgba(30, 42, 51, 0.08);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.chat-options-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-family: var(--font-display);
   font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
   color: var(--osk-slate);
 }
-.chat-context[hidden] { display: none; }
-.ctx-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; }
-.ctx-toggle input { width: auto; margin: 0; }
-.ctx-prompt-btn { margin-left: auto; }
+.chat-options-close {
+  border: 0;
+  background: none;
+  color: var(--osk-slate);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.chat-options-close:hover { color: var(--osk-red); }
+
+/* Строка-опция с переключателем — в одном стиле с кнопкой «Промпт» */
+.opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  font-size: 13.5px;
+  color: var(--osk-dark);
+  cursor: pointer;
+  user-select: none;
+}
+.opt-row:hover { border-color: var(--osk-slate); }
+
+.switch { position: relative; width: 34px; height: 18px; flex-shrink: 0; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch i {
+  position: absolute;
+  inset: 0;
+  background: var(--osk-line);
+  border-radius: 9px;
+  transition: background 0.15s;
+  pointer-events: none;
+}
+.switch i::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+.switch input:checked + i { background: var(--osk-red); }
+.switch input:checked + i::after { left: 18px; }
+
 .ctx-prompt-btn.has-custom { border-color: var(--osk-red); color: var(--osk-red); }
 #prompt-custom {
   width: 100%;
@@ -765,9 +846,10 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 28px;
-  border-top: 1px solid var(--osk-line);
-  background: var(--osk-bg);
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 4px 28px;
   font-size: 12px;
   color: var(--osk-slate);
   flex-wrap: wrap;
@@ -777,27 +859,49 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .chat-status .btn { font-size: 12px; padding: 3px 10px; }
 .chat-status .btn:disabled { opacity: 0.4; }
 
+/* Строка ввода: колонка шириной ~А4 (800px) по центру */
 .chat-input-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 28px 6px;
-  border-top: 1px solid var(--osk-line);
-  background: var(--osk-paper);
+  align-items: center;
+  gap: 2px;
+  padding: 0 28px 6px;
+  background: transparent;
 }
 .chat-input-row[hidden] { display: none; }
+.chat-input-row > * { width: 100%; max-width: 800px; }
 .chat-input-main { display: flex; gap: 12px; align-items: flex-end; }
 .chat-input-row textarea {
   flex: 1;
-  resize: none;
+  resize: none; /* высота — авторост + ручка сверху */
+  overflow-y: auto;
   padding: 10px 12px;
   border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
   font-family: var(--font-text);
   font-size: 15px;
   line-height: 1.4;
 }
 .chat-input-row textarea:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; }
 .chat-input-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* Ручка изменения высоты поля ввода (тянуть вверх) */
+.input-resize-handle {
+  height: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.input-resize-handle::after {
+  content: "";
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--osk-line);
+}
+.input-resize-handle:hover::after { background: var(--osk-slate); }
 
 /* Вложения (§16) */
 .chat-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -825,8 +929,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .attach-remove:hover { color: var(--osk-red); }
 .chat-disclaimer {
-  padding: 4px 28px 10px;
-  background: var(--osk-paper);
+  padding: 4px 28px 8px;
   font-size: 11.5px;
   color: var(--osk-slate);
   text-align: center;

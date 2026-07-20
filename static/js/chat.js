@@ -68,7 +68,9 @@ export function initChat(toast) {
   els.sendBtn = $("chat-send-btn");
   els.stopBtn = $("chat-stop-btn");
   els.empty = $("chat-empty");
-  els.context = $("chat-context");
+  els.options = $("chat-options");
+  els.optionsBtn = $("chat-options-btn");
+  els.resizeHandle = $("chat-resize-handle");
   els.ctxTools = $("ctx-tools");
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
@@ -103,6 +105,14 @@ export function initChat(toast) {
 
   loadSpecializations();
   loadExamples();
+
+  // Шторка «Параметры чата»
+  els.optionsBtn.addEventListener("click", () => {
+    els.options.hidden = !els.options.hidden;
+  });
+  $("chat-options-close").addEventListener("click", () => { els.options.hidden = true; });
+
+  initInputResize();
 
   els.newBtn.addEventListener("click", createChat);
   els.form.addEventListener("submit", (e) => {
@@ -606,13 +616,63 @@ async function loadMessages() {
   scrollToBottom(true);  // после перерисовки истории — принудительно вниз
 }
 
+// --- Высота поля ввода: авторост по содержимому + ручка (тянуть вверх) ---
+// Стартовая высота (rows=3) — минимум; ручная высота ручкой — «липкая».
+const INPUT_MAX_VH = 0.55; // максимум — чуть больше половины окна
+
+let inputMinHeight = 0;    // измеряется лениво: при init форма ещё скрыта
+let inputManualHeight = 0; // 0 — пользователь ручку не трогал
+
+function inputMaxHeight() {
+  return Math.round(window.innerHeight * INPUT_MAX_VH);
+}
+
+function measureInputMin() {
+  if (!inputMinHeight && els.input.offsetHeight) inputMinHeight = els.input.offsetHeight;
+}
+
+function autogrowInput() {
+  measureInputMin();
+  const input = els.input;
+  const prev = input.style.height;
+  input.style.height = "auto";
+  const wanted = Math.max(input.scrollHeight + 2, inputMinHeight, inputManualHeight);
+  const h = Math.min(wanted, inputMaxHeight());
+  input.style.height = h ? h + "px" : prev;
+}
+
+function initInputResize() {
+  els.input.addEventListener("input", autogrowInput);
+
+  els.resizeHandle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    measureInputMin();
+    const startY = e.clientY;
+    const startH = els.input.offsetHeight;
+    const onMove = (ev) => {
+      const h = Math.min(Math.max(startH + (startY - ev.clientY), inputMinHeight),
+                         inputMaxHeight());
+      inputManualHeight = h;
+      els.input.style.height = h + "px";
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      // вернули к минимуму — считаем, что ручная высота сброшена
+      if (inputManualHeight <= inputMinHeight) inputManualHeight = 0;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+}
+
 function updateInputState() {
   // Состояние строки ввода относится к активному чату (у каждого чата — своё)
   const streaming = isStreaming(activeChatId);
   const hasChat = activeChatId !== null;
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
-  els.context.hidden = !hasChat;
+  if (!hasChat) els.options.hidden = true; // нет чата — шторка ни к чему
   els.status.hidden = !hasChat;
   els.continueBtn.disabled = streaming;
   els.delLastBtn.disabled = streaming;
@@ -798,6 +858,7 @@ async function sendMessage() {
   renderAttachments();
 
   els.input.value = "";
+  autogrowInput(); // поле обратно к минимуму (или к ручной высоте)
   els.messages.appendChild(messageNode({
     role: "user",
     content,
