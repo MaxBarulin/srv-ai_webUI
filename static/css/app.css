@@ -475,7 +475,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .chat-options {
   position: absolute;
   top: 44px;
-  right: max(14px, calc((100% - 800px) / 2 - 44px));
+  right: 14px;
   width: 264px;
   max-height: calc(100% - 60px);
   z-index: 5;
@@ -1044,7 +1044,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   color: var(--osk-slate);
 }
 
-.note-view { max-width: 900px; }
+.note-view { max-width: 900px; margin: 0 auto; }
 .note-view-head {
   display: flex;
   align-items: flex-start;
@@ -1064,6 +1064,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 
 .note-editor {
   max-width: 900px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1319,12 +1320,11 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 
 /* ===== Визуальный проход: скругления и минимализм ===== */
 
-/* Шестерёнка параметров — сверху, у правого края колонки чата (800px).
-   На узких окнах прижимается к краю окна. */
+/* Шестерёнка параметров — в правом верхнем углу окна чата */
 .chat-gear {
   position: absolute;
   top: 10px;
-  right: max(14px, calc((100% - 800px) / 2 - 44px));
+  right: 14px;
   z-index: 6;
   border: 0;
   background: none;
