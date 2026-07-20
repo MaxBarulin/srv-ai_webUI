@@ -75,7 +75,6 @@ export function initChat(toast) {
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
   els.ctxThink = $("ctx-think");
-  els.spec = $("chat-spec");
   els.examples = $("chat-examples");
   els.attachBtn = $("chat-attach-btn");
   els.fileInput = $("chat-file");
@@ -190,18 +189,13 @@ export function setRagAvailable(available) {
 
 // --- Специализации и примеры (§15) ---
 
+// Кэш специализаций — используется только в модалке «Промпт»: новый чат
+// создаётся без промпта, режим при необходимости выбирают уже в самом чате.
 async function loadSpecializations() {
   try {
     specializations = await api("/api/specializations");
-    els.spec.replaceChildren(...specializations.map((s) => {
-      const opt = document.createElement("option");
-      opt.value = String(s.id);
-      opt.textContent = s.name;
-      return opt;
-    }));
-    els.spec.hidden = specializations.length <= 1;
   } catch {
-    els.spec.hidden = true;
+    specializations = [];
   }
 }
 
@@ -432,9 +426,8 @@ async function selectChat(id) {
 }
 
 async function createChat() {
-  const body = {};
-  if (!els.spec.hidden && els.spec.value) body.specialization_id = Number(els.spec.value);
-  const chat = await api("/api/chats", { method: "POST", body });
+  // Без промпта по умолчанию — режим выбирается в чате через ⚙ → Промпт
+  const chat = await api("/api/chats", { method: "POST", body: {} });
   activeChatId = chat.id;
   els.messages.replaceChildren(); // новый чат пуст — убрать сообщения предыдущего
   messagesFollow = true;          // сброс sticky для нового пустого чата

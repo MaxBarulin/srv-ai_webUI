@@ -13,6 +13,16 @@ const SECTIONS = {
 
 let currentUser = null;
 
+// Метки времени в БД — UTC; в интерфейсе показываем московское время
+function fmtMsk(iso, withTime = true) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const opts = { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric" };
+  if (withTime) Object.assign(opts, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleString("ru-RU", opts);
+}
+
 const toastEl = document.getElementById("toast");
 let toastTimer = null;
 
@@ -61,7 +71,7 @@ function userRow(u) {
     name: u.display_name,
     role: null,
     status: null,
-    created: (u.created_at || "").slice(0, 10),
+    created: fmtMsk(u.created_at, false),
   };
 
   for (const [key, text] of Object.entries(cells)) {
@@ -193,7 +203,7 @@ function auditRow(item) {
   const tr = document.createElement("tr");
   const object = [item.object_type, item.object_id].filter(Boolean).join(" #");
   const cells = [
-    (item.created_at || "").replace("T", " ").slice(0, 19),
+    fmtMsk(item.created_at),
     item.user_login || "—",
     item.action,
     object || "—",
