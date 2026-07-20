@@ -470,16 +470,19 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-note { margin-top: 6px; font-size: 12px; color: var(--osk-slate); font-style: italic; }
 .msg-note.msg-error { color: var(--osk-red-dark); font-style: normal; }
 
-/* Панель «Параметры чата» — выезжает справа по ⚙ (§4) */
+/* Окно «Параметры чата» — компактный поповер под шестерёнкой (§4) */
 .chat-options {
   position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: 280px;
+  top: 44px;
+  right: 14px;
+  width: 264px;
+  max-height: calc(100% - 60px);
   z-index: 5;
   background: var(--osk-paper);
-  border-left: 1px solid var(--osk-line);
-  box-shadow: -8px 0 22px rgba(30, 42, 51, 0.08);
-  padding: 16px;
+  border: 1px solid var(--osk-line);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(30, 42, 51, 0.14);
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1321,11 +1324,11 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 
 /* ===== Визуальный проход: скругления и минимализм ===== */
 
-/* Шестерёнка параметров — в левом верхнем углу, прямо на фоне чата */
+/* Шестерёнка параметров — в правом верхнем углу, прямо на фоне чата */
 .chat-gear {
   position: absolute;
   top: 10px;
-  left: 14px;
+  right: 14px;
   z-index: 6;
   border: 0;
   background: none;

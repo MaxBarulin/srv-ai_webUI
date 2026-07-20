@@ -106,11 +106,17 @@ export function initChat(toast) {
   loadSpecializations();
   loadExamples();
 
-  // Шторка «Параметры чата»
+  // Окно «Параметры чата» (поповер под шестерёнкой)
   els.optionsBtn.addEventListener("click", () => {
     els.options.hidden = !els.options.hidden;
   });
   $("chat-options-close").addEventListener("click", () => { els.options.hidden = true; });
+  // клик вне окна закрывает его
+  document.addEventListener("click", (e) => {
+    if (els.options.hidden) return;
+    if (e.target.closest("#chat-options") || e.target.closest("#chat-options-btn")) return;
+    els.options.hidden = true;
+  });
 
   initInputResize();
 
