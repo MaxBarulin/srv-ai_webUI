@@ -40,6 +40,9 @@ function showSection(name) {
   document.querySelector(".content").classList.toggle("content-full", name !== "admin");
   // В чате шапка скрыта — колонка чата до самого верха окна
   document.querySelector(".main").classList.toggle("no-topbar", name === "chat");
+  // Панели списков в левом сайдбаре: чаты — в Чате, заметки — в Заметках
+  document.getElementById("sidebar-chat").hidden = name !== "chat";
+  document.getElementById("sidebar-notes").hidden = name !== "notes";
   if (name === "admin") loadUsers();
   window.dispatchEvent(new CustomEvent("section-shown", { detail: name }));
 }

@@ -672,7 +672,8 @@ function updateInputState() {
   const hasChat = activeChatId !== null;
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
-  if (!hasChat) els.options.hidden = true; // нет чата — шторка ни к чему
+  els.optionsBtn.hidden = !hasChat; // шестерёнка и шторка — только при открытом чате
+  if (!hasChat) els.options.hidden = true;
   els.status.hidden = !hasChat;
   els.continueBtn.disabled = streaming;
   els.delLastBtn.disabled = streaming;

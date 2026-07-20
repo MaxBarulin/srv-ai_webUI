@@ -20,6 +20,29 @@
         <li><a href="#calendar" data-section="calendar">Календарь</a></li>
         <li hidden id="nav-admin"><a href="#admin" data-section="admin">Администрирование</a></li>
       </ul>
+
+      <div class="sidebar-panel" id="sidebar-chat" hidden>
+        <div class="chat-new-row">
+          <select id="chat-spec" title="Режим (специализация) нового чата"></select>
+          <button type="button" class="btn btn-primary chat-new" id="chat-new-btn">Новый чат</button>
+        </div>
+        <ul class="chat-list" id="chat-list"></ul>
+      </div>
+
+      <div class="sidebar-panel" id="sidebar-notes" hidden>
+        <button type="button" class="btn btn-primary notes-new" id="note-new-btn">Новая заметка</button>
+        <div class="notes-filters">
+          <input type="text" id="notes-search" placeholder="Поиск…">
+          <input type="text" id="notes-tags" placeholder="Тэги через запятую">
+          <select id="notes-scope">
+            <option value="all" selected>Все заметки</option>
+            <option value="personal">Личные</option>
+            <option value="shared">Общие</option>
+          </select>
+        </div>
+        <ul class="notes-list" id="notes-list"></ul>
+      </div>
+
       <div class="sidebar-user">
         <b id="user-name"></b>
         <div class="sidebar-user-actions">
@@ -38,14 +61,9 @@
       <main class="content">
         <section id="section-chat" hidden>
           <div class="chat-layout">
-            <aside class="chat-sidebar">
-              <div class="chat-new-row">
-                <select id="chat-spec" title="Режим (специализация) нового чата"></select>
-                <button type="button" class="btn btn-primary chat-new" id="chat-new-btn">Новый чат</button>
-              </div>
-              <ul class="chat-list" id="chat-list"></ul>
-            </aside>
             <div class="chat-main">
+              <button type="button" class="chat-gear" id="chat-options-btn"
+                      title="Параметры чата">⚙</button>
               <aside class="chat-options" id="chat-options" hidden>
                 <div class="chat-options-head">
                   <span>Параметры чата</span>
@@ -96,8 +114,6 @@
                     <button type="button" class="btn" id="chat-stop-btn" hidden>Остановить</button>
                     <button type="button" class="btn" id="chat-attach-btn"
                       title="Прикрепить файл (txt, md, csv, docx, xlsx, pdf, png, jpg)">📎 Файл</button>
-                    <button type="button" class="btn" id="chat-options-btn"
-                      title="Параметры чата">⚙</button>
                   </div>
                 </div>
                 <input type="file" id="chat-file" hidden
@@ -110,20 +126,6 @@
 
         <section id="section-notes" hidden>
           <div class="notes-layout">
-            <aside class="notes-sidebar">
-              <button type="button" class="btn btn-primary notes-new" id="note-new-btn">Новая заметка</button>
-              <div class="notes-filters">
-                <input type="text" id="notes-search" placeholder="Поиск…">
-                <input type="text" id="notes-tags" placeholder="Тэги через запятую">
-                <select id="notes-scope">
-                  <option value="all" selected>Все заметки</option>
-                  <option value="personal">Личные</option>
-                  <option value="shared">Общие</option>
-                </select>
-              </div>
-              <ul class="notes-list" id="notes-list"></ul>
-            </aside>
-
             <div class="notes-main">
               <div class="notes-empty" id="note-empty">
                 <div class="display">Заметка не выбрана</div>
