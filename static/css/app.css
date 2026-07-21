@@ -172,6 +172,10 @@ textarea {
   border: 1px solid var(--osk-line);
   font-family: var(--font-text);
 }
+/* Уголок растягивания textarea: Chromium рисует его светлым независимо от
+   color-scheme. Убираем его подложку — грип сливается с полем в любой теме
+   (растягивание за угол при этом работает). */
+textarea::-webkit-resizer { background: transparent; }
 input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; border-color: var(--osk-red); }
 
 /* --- Карточка со скошенным срезом --- */
