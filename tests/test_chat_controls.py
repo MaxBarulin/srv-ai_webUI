@@ -50,9 +50,9 @@ def _send(client, chat_id: int, content: str):
 # --- Статистика генерации (метод llama.cpp: счётчики сервера) ---
 
 def test_stats_event_from_server_counters(client, ctrl_user, monkeypatch):
-    """context_size берётся из /props живого сервера (llama.cpp method):
-    mock отдаёт n_ctx=8192, поэтому 125 из 8192 ~ 2%. LLM_CONTEXT_SIZE
-    из .env служит только запасным вариантом."""
+    """Знаменатель процента — заданный админом LLM_CONTEXT_SIZE (.env): показываем
+    заполнение относительно ВЫБРАННОГО лимита (500), а /props (8192) — лишь запас.
+    Также приходит elapsed_seconds — полное время ответа."""
     monkeypatch.setattr("app.routers.chat.settings",
                         replace(settings, llm_context_size=500))
     chat_id = client.post("/api/chats", json={}).json()["id"]
@@ -65,8 +65,9 @@ def test_stats_event_from_server_counters(client, ctrl_user, monkeypatch):
     assert stats[0]["tokens_per_second"] == 18.5
     # context_used = last_prompt_tokens + last_completion_tokens = 100 + 25
     assert stats[0]["context_used"] == 125
-    assert stats[0]["context_size"] == 8192  # именно /props, а не 500
-    assert stats[0]["context_percent"] == 2  # round(125/8192*100)
+    assert stats[0]["context_size"] == 500          # из .env, а не /props (8192)
+    assert stats[0]["context_percent"] == 25        # round(125/500*100)
+    assert stats[0]["elapsed_seconds"] >= 0         # полное время ответа
 
 
 def test_stats_falls_back_to_env_when_props_unavailable(client, ctrl_user, monkeypatch):

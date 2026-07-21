@@ -529,10 +529,19 @@ function statsText(stats) {
   if (!stats || !stats.completion_tokens) return "";
   const parts = [`${stats.completion_tokens} ток.`];
   if (stats.tokens_per_second) parts.push(`${stats.tokens_per_second} ток/с`);
+  if (stats.elapsed_seconds) parts.push(`${fmtSeconds(stats.elapsed_seconds)}`);
   if (stats.context_percent !== null && stats.context_percent !== undefined) {
     parts.push(`контекст ${stats.context_percent}%`);
   }
   return parts.join(" · ");
+}
+
+// Секунды → «12,3 с» или «1 мин 05 с» для длинных ответов
+function fmtSeconds(s) {
+  if (s < 60) return `${s.toFixed(1).replace(".", ",")} с`;
+  const m = Math.floor(s / 60);
+  const rest = Math.round(s - m * 60);
+  return `${m} мин ${String(rest).padStart(2, "0")} с`;
 }
 
 function opButton(op, label, title) {
@@ -775,16 +784,23 @@ function renderLive(st, scroll = false) {
 // после перечитывания истории показываются под ответом.
 function updateLiveStats(st) {
   if (!st.liveStats) return;
+  // Таймер тикает от нажатия «Отправить» (st.sendStart) — даже пока идёт
+  // очередь/размышления и токенов ещё нет.
+  const wall = st.sendStart ? (performance.now() - st.sendStart) / 1000 : 0;
   const chars = (st.reasoningText || "").length + (st.contentText || "").length;
-  if (!chars || !st.genStart) { st.liveStats.textContent = ""; return; }
+  if (!chars || !st.genStart) {
+    st.liveStats.textContent = wall ? fmtSeconds(wall) : "";
+    return;
+  }
   const toks = Math.max(1, Math.round(chars / 4));
-  const secs = (performance.now() - st.genStart) / 1000;
-  const tps = secs > 0 ? toks / secs : 0;
-  st.liveStats.textContent = `~${toks} ток · ${tps.toFixed(1)} ток/с`;
+  const genSecs = (performance.now() - st.genStart) / 1000;
+  const tps = genSecs > 0 ? toks / genSecs : 0;
+  st.liveStats.textContent = `~${toks} ток · ${tps.toFixed(1)} ток/с · ${fmtSeconds(wall)}`;
 }
 
 // Снять индикаторы стрима с живого контейнера (конец генерации/ошибка)
 function finishLive(st) {
+  if (st.timer) { clearInterval(st.timer); st.timer = null; }
   st.live.classList.remove("streaming");
   st.liveReasoning.classList.remove("thinking");
   const summary = st.liveReasoning.querySelector("summary");
@@ -810,8 +826,10 @@ function buildLive(chatId) {
   const st = {
     chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
     liveStats, reasoningText: "", contentText: "", messageId: null,
-    genStart: 0, reasoningFollow: true,
+    genStart: 0, sendStart: performance.now(), reasoningFollow: true,
   };
+  // Плавно тикающий таймер «от отправки», даже пока идёт очередь/размышления
+  st.timer = setInterval(() => updateLiveStats(st), 250);
   liveReasoning.querySelector(".reasoning-body").addEventListener("scroll", (e) => {
     st.reasoningFollow = isAtBottom(e.currentTarget);
   });

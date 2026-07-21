@@ -481,6 +481,9 @@ async def send_message(
                      {"label": f"{name}: {exc}", "status": "error"}))
 
     async def event_stream():
+        # Полное время ответа: от начала обработки запроса (включая ожидание
+        # очереди к модели) до завершения генерации — «сколько ждал пользователь».
+        wall_start = time.monotonic()
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_activity: list[dict] = []
@@ -625,12 +628,16 @@ async def send_message(
                 # итерации. Суммировать completion по итерациям НЕЛЬЗЯ —
                 # промежуточные ответы уже учтены в prompt_tokens.
                 context_used = last_prompt_tokens + last_completion_tokens
-                context_size = (await get_server_context_size()
-                                or settings.llm_context_size)
+                # Знаменатель процента — заданный администратором LLM_CONTEXT_SIZE
+                # (.env): показываем заполнение относительно ВЫБРАННОГО лимита.
+                # /props сервера — только запасной вариант, если .env не задан.
+                context_size = (settings.llm_context_size
+                                or await get_server_context_size())
                 stats_payload = {
                     "completion_tokens": total_completion,
                     "tokens_per_second": round(total_completion / total_gen_seconds, 1)
                     if total_gen_seconds else 0,
+                    "elapsed_seconds": round(time.monotonic() - wall_start, 1),
                     "context_used": context_used,
                     "context_size": context_size,
                     "context_percent": round(context_used / context_size * 100)
@@ -707,6 +714,7 @@ async def continue_generation(
     ]
 
     async def event_stream():
+        wall_start = time.monotonic()
         content_parts: list[str] = []
         finished = False
         had_error = False
@@ -765,12 +773,13 @@ async def continue_generation(
                 # и есть completion этой итерации, так что формула
                 # prompt + completion (KV после генерации) корректна.
                 context_used = last_prompt_tokens + total_completion
-                context_size = (await get_server_context_size()
-                                or settings.llm_context_size)
+                context_size = (settings.llm_context_size
+                                or await get_server_context_size())
                 stats_payload = {
                     "completion_tokens": total_completion,
                     "tokens_per_second": round(total_completion / total_gen_seconds, 1)
                     if total_gen_seconds else 0,
+                    "elapsed_seconds": round(time.monotonic() - wall_start, 1),
                     "context_used": context_used,
                     "context_size": context_size,
                     "context_percent": round(context_used / context_size * 100)
