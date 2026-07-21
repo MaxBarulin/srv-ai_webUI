@@ -340,11 +340,17 @@ function applyFontScale(scale) {
 }
 
 // --- Тема оформления (светлая / тёмная / как в системе) ---
-// Хранится в localStorage (мгновенно, без сервера); раннее применение —
-// инлайн-скриптом в <head>, здесь только реакция на выбор и подсветка.
+// Источник истины — настройка пользователя на сервере (users.theme), как и
+// размер шрифта: выбор следует за аккаунтом на любом устройстве. localStorage —
+// лишь кэш последнего выбора для мгновенной отрисовки без «вспышки» и для
+// экрана входа (там сессии ещё нет). Раннее применение — theme-init.js в <head>.
 
-function currentTheme() {
+function cachedTheme() {
   try { return localStorage.getItem("theme") || "light"; } catch { return "light"; }
+}
+
+function cacheTheme(theme) {
+  try { localStorage.setItem("theme", theme); } catch { /* приватный режим */ }
 }
 
 function applyTheme(theme) {
@@ -357,16 +363,25 @@ function applyTheme(theme) {
   });
 }
 
-function setTheme(theme) {
-  try { localStorage.setItem("theme", theme); } catch { /* приватный режим */ }
+async function setTheme(theme) {
+  cacheTheme(theme);        // мгновенно — и как кэш для входа
   applyTheme(theme);
+  currentUser.theme = theme;
+  try {
+    await api("/api/me/settings", { method: "POST", body: { theme } });
+  } catch (e) {
+    toast(e.detail || "Не удалось сохранить тему", true);
+  }
 }
 
 function initTheme() {
-  applyTheme(currentTheme());
+  // Серверное значение (из /api/me) — источник истины; синхронизируем кэш.
+  const theme = currentUser.theme || "light";
+  cacheTheme(theme);
+  applyTheme(theme);
   // Если выбрано «как в системе» — реагируем на смену системной темы
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (currentTheme() === "system") applyTheme("system");
+    if ((currentUser.theme || "light") === "system") applyTheme("system");
   });
 }
 

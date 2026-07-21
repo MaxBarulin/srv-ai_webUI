@@ -129,6 +129,8 @@ _COLUMN_MIGRATIONS = [
     ("chats", "specialization_id", "INTEGER"),
     ("chats", "custom_prompt", "TEXT NOT NULL DEFAULT ''"),
     ("users", "font_scale", "INTEGER NOT NULL DEFAULT 1"),
+    # Тема оформления пользователя: 'light' | 'dark' | 'system'
+    ("users", "theme", "TEXT NOT NULL DEFAULT 'light'"),
     # Пер-чатовые тумблеры «Заметки/Календарь» и «Размышления» (§15)
     ("chats", "use_tools", "INTEGER NOT NULL DEFAULT 1"),
     ("chats", "enable_thinking", "INTEGER NOT NULL DEFAULT 1"),

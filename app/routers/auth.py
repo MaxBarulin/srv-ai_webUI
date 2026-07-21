@@ -102,17 +102,20 @@ async def me(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
     # rag_enabled — чтобы UI знал, показывать ли переключатель «База знаний» (§8)
-    cursor = await db.execute("SELECT font_scale FROM users WHERE id = ?", (user["id"],))
+    cursor = await db.execute("SELECT font_scale, theme FROM users WHERE id = ?", (user["id"],))
     row = await cursor.fetchone()
     return {
         **user,
         "font_scale": row["font_scale"] if row else 1,
+        "theme": (row["theme"] if row and row["theme"] else "light"),
         "rag_enabled": settings.rag_enabled and bool(settings.rag_base_url),
     }
 
 
 class SettingsRequest(BaseModel):
-    font_scale: int  # 0 — мелкий, 1 — обычный, 2 — крупный
+    # Частичное обновление: меняются только переданные поля
+    font_scale: int | None = None  # 0 — мелкий, 1 — обычный, 2 — крупный
+    theme: str | None = None       # 'light' | 'dark' | 'system'
 
 
 @router.post("/me/settings")
@@ -121,12 +124,18 @@ async def update_settings(
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    if payload.font_scale not in (0, 1, 2):
-        raise HTTPException(status_code=400, detail="Недопустимый масштаб")
-    await db.execute("UPDATE users SET font_scale = ? WHERE id = ?",
-                     (payload.font_scale, user["id"]))
+    if payload.font_scale is not None:
+        if payload.font_scale not in (0, 1, 2):
+            raise HTTPException(status_code=400, detail="Недопустимый масштаб")
+        await db.execute("UPDATE users SET font_scale = ? WHERE id = ?",
+                         (payload.font_scale, user["id"]))
+    if payload.theme is not None:
+        if payload.theme not in ("light", "dark", "system"):
+            raise HTTPException(status_code=400, detail="Недопустимая тема")
+        await db.execute("UPDATE users SET theme = ? WHERE id = ?",
+                         (payload.theme, user["id"]))
     await db.commit()
-    return {"ok": True, "font_scale": payload.font_scale}
+    return {"ok": True, "font_scale": payload.font_scale, "theme": payload.theme}
 
 
 @router.post("/me/password")

@@ -268,6 +268,18 @@ def test_font_scale_setting(client, ergo_user):
     assert client.post("/api/me/settings", json={"font_scale": 7}).status_code == 400
 
 
+def test_theme_setting_persisted_per_user(client, ergo_user):
+    # По умолчанию — светлая; выбор сохраняется на пользователе (следует за аккаунтом)
+    assert client.get("/api/me").json()["theme"] == "light"
+    assert client.post("/api/me/settings", json={"theme": "dark"}).status_code == 200
+    assert client.get("/api/me").json()["theme"] == "dark"
+    # частичное обновление шрифта не сбрасывает тему
+    client.post("/api/me/settings", json={"font_scale": 2})
+    assert client.get("/api/me").json()["theme"] == "dark"
+    # недопустимое значение отвергается
+    assert client.post("/api/me/settings", json={"theme": "neon"}).status_code == 400
+
+
 # --- Очередь ---
 
 def test_queue_serializes_and_reports_position():
