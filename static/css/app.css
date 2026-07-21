@@ -1442,3 +1442,31 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .sidebar-panel ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); }
 .sidebar ::-webkit-scrollbar-thumb:hover,
 .sidebar-panel ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+
+/* ===== Экспорт заметки в PDF (печать браузера) ===== */
+/* Контейнер печатается только в режиме печати; всегда светлая палитра —
+   PDF должен быть читаемым и печатаемым независимо от темы приложения. */
+#pdf-print {
+  display: none;
+  --osk-bg: #F4F5F6;
+  --osk-paper: #FFFFFF;
+  --osk-dark: #1E2A33;
+  --osk-line: #D9DDE0;
+  --osk-slate: #5B6670;
+  --osk-text: #22292E;
+  color: var(--osk-text);
+}
+.pdf-title { font-size: 22px; margin: 0 0 6px; }
+.pdf-meta, .pdf-tags { font-size: 12px; color: var(--osk-slate); margin-bottom: 4px; }
+.pdf-tags:empty { display: none; }
+
+@media print {
+  body.printing-note { background: #fff; }
+  body.printing-note .app { display: none !important; }
+  body.printing-note #pdf-print { display: block !important; background: #fff; }
+  /* аккуратная пагинация: не рвём таблицы, код и формулы между страницами */
+  #pdf-print .table-wrap, #pdf-print .code-block,
+  #pdf-print .katex-display { break-inside: avoid; page-break-inside: avoid; }
+  #pdf-print .table-wrap { overflow: visible; }
+  @page { margin: 18mm 16mm; }
+}

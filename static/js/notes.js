@@ -27,6 +27,7 @@ export function initNotes(toastFn) {
     viewBody: $("note-view-body"),
     editBtn: $("note-edit-btn"),
     deleteBtn: $("note-delete-btn"),
+    pdfBtn: $("note-pdf-btn"),
     editor: $("note-editor"),
     editTitle: $("note-edit-title"),
     editTags: $("note-edit-tags"),
@@ -53,6 +54,7 @@ export function initNotes(toastFn) {
     if (note) openEditor(note);
   });
   els.deleteBtn.addEventListener("click", deleteActiveNote);
+  els.pdfBtn.addEventListener("click", exportActiveNotePdf);
   els.cancelBtn.addEventListener("click", closeEditor);
   els.editor.addEventListener("submit", saveNote);
 
@@ -150,6 +152,52 @@ function renderMain() {
   }));
 
   els.viewBody.innerHTML = renderMarkdown(note.body || "*Пустая заметка*");
+}
+
+// Экспорт заметки в PDF через диалог печати браузера (offline, KaTeX уже
+// загружен — формулы печатаются как отрендерены; «Сохранить как PDF»).
+function exportActiveNotePdf() {
+  const note = notes.find((n) => n.id === activeNoteId);
+  if (!note) return;
+
+  let area = document.getElementById("pdf-print");
+  if (!area) {
+    area = document.createElement("div");
+    area.id = "pdf-print";
+    document.body.appendChild(area);
+  }
+  const meta = [
+    `${note.scope === "shared" ? "Общая" : "Личная"} заметка`,
+    `автор: ${note.author_name}`,
+    `создана: ${fmtDate(note.created_at)}`,
+  ];
+  if (note.updated_at !== note.created_at && note.updated_by_name) {
+    meta.push(`изменено: ${note.updated_by_name}, ${fmtDate(note.updated_at)}`);
+  }
+  // Заголовок и мета — как текст (экранируются через textContent), тело —
+  // уже безопасный HTML из нашего рендера (renderMarkdown санитизирует ввод).
+  area.replaceChildren();
+  const h = document.createElement("h1");
+  h.className = "pdf-title";
+  h.textContent = note.title;
+  const m = document.createElement("div");
+  m.className = "pdf-meta";
+  m.textContent = meta.join(" · ");
+  const tags = document.createElement("div");
+  tags.className = "pdf-tags";
+  tags.textContent = note.tags.length ? "Теги: " + note.tags.join(", ") : "";
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  body.innerHTML = renderMarkdown(note.body || "");
+  area.append(h, m, tags, body);
+
+  document.body.classList.add("printing-note");
+  const cleanup = () => {
+    document.body.classList.remove("printing-note");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
 }
 
 async function deleteActiveNote() {
