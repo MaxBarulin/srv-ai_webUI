@@ -189,8 +189,8 @@ async def list_messages(
 ) -> list[dict]:
     await _get_own_chat(db, chat_id, user["id"])
     cursor = await db.execute(
-        "SELECT m.id, m.role, m.content, m.reasoning, m.tool_calls_json, m.created_at, "
-        "       f.rating AS feedback_rating "
+        "SELECT m.id, m.role, m.content, m.reasoning, m.tool_calls_json, m.stats_json, "
+        "       m.created_at, f.rating AS feedback_rating "
         "FROM messages m "
         "LEFT JOIN feedback f ON f.message_id = m.id AND f.user_id = ? "
         "WHERE m.chat_id = ? ORDER BY m.id",
@@ -199,6 +199,8 @@ async def list_messages(
     result = []
     for row in await cursor.fetchall():
         msg = dict(row)
+        raw_stats = msg.pop("stats_json", None)
+        msg["stats"] = json.loads(raw_stats) if raw_stats else None
         raw = msg.pop("tool_calls_json", None)
         parsed = json.loads(raw) if raw else None
         # У ассистента в колонке — список плашек инструментов,
@@ -275,16 +277,17 @@ async def submit_feedback(
 
 async def _save_assistant_message(
     chat_id: int, content: str, reasoning: str, auto_title: str | None,
-    tool_activity: list[dict] | None = None,
+    tool_activity: list[dict] | None = None, stats: dict | None = None,
 ) -> int:
     """Persist the assistant reply on its own connection (survives client disconnect)."""
     async with get_connection() as db:
         now = utcnow_iso()
         cursor = await db.execute(
-            "INSERT INTO messages (chat_id, role, content, reasoning, tool_calls_json, created_at) "
-            "VALUES (?, 'assistant', ?, ?, ?, ?)",
+            "INSERT INTO messages (chat_id, role, content, reasoning, tool_calls_json, "
+            "stats_json, created_at) VALUES (?, 'assistant', ?, ?, ?, ?, ?)",
             (chat_id, content, reasoning or None,
-             json.dumps(tool_activity, ensure_ascii=False) if tool_activity else None, now),
+             json.dumps(tool_activity, ensure_ascii=False) if tool_activity else None,
+             json.dumps(stats, ensure_ascii=False) if stats else None, now),
         )
         if auto_title:
             await db.execute(
@@ -613,33 +616,37 @@ async def send_message(
                               + len("".join(reasoning_parts))) // 3
                     metrics.record_request(success=not had_error,
                                            tokens=tokens, seconds=elapsed)
+            # Статистика генерации — считаем ДО сохранения, чтобы записать её
+            # в само сообщение (переживёт перезагрузку и покажется под ответом).
+            stats_payload = None
+            if server_stats_seen:
+                # KV-кэш после turn'а = prompt последней итерации
+                # (уже включает всю историю turn'а) + completion этой же
+                # итерации. Суммировать completion по итерациям НЕЛЬЗЯ —
+                # промежуточные ответы уже учтены в prompt_tokens.
+                context_used = last_prompt_tokens + last_completion_tokens
+                context_size = (await get_server_context_size()
+                                or settings.llm_context_size)
+                stats_payload = {
+                    "completion_tokens": total_completion,
+                    "tokens_per_second": round(total_completion / total_gen_seconds, 1)
+                    if total_gen_seconds else 0,
+                    "context_used": context_used,
+                    "context_size": context_size,
+                    "context_percent": round(context_used / context_size * 100)
+                    if context_size else None,
+                }
             saved_id = None
             if content_parts or reasoning_parts or tool_activity:
                 # При разрыве стрима (кнопка «Остановить») сохраняем частичный ответ;
                 # create_task переживает отмену этого генератора.
                 save = asyncio.create_task(_save_assistant_message(
                     chat_id, "".join(content_parts), "".join(reasoning_parts), auto_title,
-                    tool_activity))
+                    tool_activity, stats_payload))
                 with contextlib.suppress(asyncio.CancelledError):
                     saved_id = await asyncio.shield(save)
             if finished:
-                if server_stats_seen:
-                    # KV-кэш после turn'а = prompt последней итерации
-                    # (уже включает всю историю turn'а) + completion этой же
-                    # итерации. Суммировать completion по итерациям НЕЛЬЗЯ —
-                    # промежуточные ответы уже учтены в prompt_tokens.
-                    context_used = last_prompt_tokens + last_completion_tokens
-                    context_size = (await get_server_context_size()
-                                    or settings.llm_context_size)
-                    stats_payload = {
-                        "completion_tokens": total_completion,
-                        "tokens_per_second": round(total_completion / total_gen_seconds, 1)
-                        if total_gen_seconds else 0,
-                        "context_used": context_used,
-                        "context_size": context_size,
-                        "context_percent": round(context_used / context_size * 100)
-                        if context_size else None,
-                    }
+                if stats_payload is not None:
                     yield _sse("stats", stats_payload)
                 yield _sse("done", {"message_id": saved_id, "title": auto_title})
 
@@ -656,11 +663,15 @@ CONTINUE_INSTRUCTION = (
 )
 
 
-async def _append_to_message(message_id: int, chat_id: int, extra: str) -> None:
+async def _append_to_message(message_id: int, chat_id: int, extra: str,
+                             stats: dict | None = None) -> None:
     """Дописать продолжение к существующему ответу (своё соединение — переживает разрыв)."""
     async with get_connection() as db:
         await db.execute("UPDATE messages SET content = content || ? WHERE id = ?",
                          (extra, message_id))
+        if stats is not None:
+            await db.execute("UPDATE messages SET stats_json = ? WHERE id = ?",
+                             (json.dumps(stats, ensure_ascii=False), message_id))
         await db.execute("UPDATE chats SET updated_at = ? WHERE id = ?",
                          (utcnow_iso(), chat_id))
         await db.commit()
@@ -747,28 +758,33 @@ async def continue_generation(
                         success=not had_error,
                         tokens=len("".join(content_parts)) // 3,
                         seconds=time.monotonic() - gen_start)
+            # Статистика — до записи, чтобы сохранить её в самом сообщении.
+            stats_payload = None
+            if server_stats_seen:
+                # В continue-режиме одна итерация — тут total_completion
+                # и есть completion этой итерации, так что формула
+                # prompt + completion (KV после генерации) корректна.
+                context_used = last_prompt_tokens + total_completion
+                context_size = (await get_server_context_size()
+                                or settings.llm_context_size)
+                stats_payload = {
+                    "completion_tokens": total_completion,
+                    "tokens_per_second": round(total_completion / total_gen_seconds, 1)
+                    if total_gen_seconds else 0,
+                    "context_used": context_used,
+                    "context_size": context_size,
+                    "context_percent": round(context_used / context_size * 100)
+                    if context_size else None,
+                }
             if content_parts:
                 extra = "".join(content_parts)
-                save = asyncio.create_task(_append_to_message(message_id, chat_id, extra))
+                save = asyncio.create_task(
+                    _append_to_message(message_id, chat_id, extra, stats_payload))
                 with contextlib.suppress(asyncio.CancelledError):
                     await asyncio.shield(save)
             if finished:
-                if server_stats_seen:
-                    # В continue-режиме одна итерация — тут total_completion
-                    # и есть completion этой итерации, так что формула
-                    # prompt + completion (KV после генерации) корректна.
-                    context_used = last_prompt_tokens + total_completion
-                    context_size = (await get_server_context_size()
-                                    or settings.llm_context_size)
-                    yield _sse("stats", {
-                        "completion_tokens": total_completion,
-                        "tokens_per_second": round(total_completion / total_gen_seconds, 1)
-                        if total_gen_seconds else 0,
-                        "context_used": context_used,
-                        "context_size": context_size,
-                        "context_percent": round(context_used / context_size * 100)
-                        if context_size else None,
-                    })
+                if stats_payload is not None:
+                    yield _sse("stats", stats_payload)
                 yield _sse("done", {"message_id": message_id, "title": None})
 
     return StreamingResponse(

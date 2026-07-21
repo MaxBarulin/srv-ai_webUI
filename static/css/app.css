@@ -617,7 +617,16 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .example-chip:hover { background: var(--osk-bg); }
 
 /* Обратная связь 👍/👎 (§15) */
-.feedback-bar { max-width: 800px; margin: 4px auto 0; display: flex; gap: 6px; }
+.feedback-bar {
+  max-width: 800px;
+  margin: 4px auto 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* Действия под сообщением пользователя — прижаты вправо, под «пузырь» */
+.feedback-bar.user-bar { justify-content: flex-end; }
 .fb-btn {
   border: 1px solid var(--osk-line);
   background: var(--osk-paper);
@@ -644,6 +653,53 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .msg-action:hover { border-color: var(--osk-slate); color: var(--osk-dark); }
 .msg-action.active { border-color: var(--osk-red); color: var(--osk-red); }
+
+/* Операции над сообщением: продолжить/перегенерировать/редактировать/удалить */
+.msg-op {
+  border: 1px solid var(--osk-line);
+  background: var(--osk-paper);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-text);
+  color: var(--osk-slate);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+}
+.msg-op:hover { border-color: var(--osk-slate); color: var(--osk-dark); }
+.msg-op[data-op="delete"]:hover { border-color: var(--osk-red); color: var(--osk-red); }
+
+/* Итоговая статистика генерации под ответом (счётчики сервера) */
+.msg-stats {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--osk-slate);
+  white-space: nowrap;
+  align-self: center;
+}
+/* Живой счётчик токенов во время генерации */
+.msg-live-stats {
+  max-width: 800px;
+  margin: 4px auto 0;
+  font-size: 12px;
+  color: var(--osk-slate);
+  font-variant-numeric: tabular-nums;
+  min-height: 14px;
+}
+.msg-live-stats:empty { display: none; }
+
+/* Инлайн-редактор запроса пользователя */
+.edit-box { max-width: 800px; margin: 6px 0 0 auto; width: 100%; }
+.edit-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid var(--osk-red);
+  border-radius: var(--radius);
+  font-family: var(--font-text);
+  font-size: 15px;
+  resize: vertical;
+}
+.edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 
 /* Тело ответа в режиме «исходный markdown» */
 .msg-body.raw-view {
@@ -870,25 +926,6 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   max-width: 100%;
 }
 @keyframes think-shimmer { from { background-position: 200% 0; } to { background-position: 0% 0; } }
-
-/* Панель статуса над строкой ввода (как в llama.cpp): статистика + действия */
-.chat-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 4px 28px;
-  font-size: 12px;
-  color: var(--osk-slate);
-  flex-wrap: wrap;
-}
-.chat-status[hidden] { display: none; }
-.chat-status-actions { display: flex; gap: 8px; }
-.chat-status .btn { font-size: 12px; padding: 3px 10px; }
-.chat-status .btn:disabled { opacity: 0.4; }
 
 /* Строка ввода: колонка шириной ~А4 (800px) по центру */
 .chat-input-row {

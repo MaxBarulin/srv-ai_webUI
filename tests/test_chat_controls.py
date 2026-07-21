@@ -238,3 +238,17 @@ def test_chat_toggles_persisted(client, ctrl_user):
     client.put(f"/api/chats/{chat_id}", json={"title": "Переименован"})
     chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
     assert chat["use_tools"] == 0 and chat["enable_thinking"] == 0
+
+
+def test_stats_persisted_on_assistant_message(client, ctrl_user):
+    """Статистика генерации сохраняется в сообщении и возвращается в истории —
+    показывается компактно под ответом и переживает перезагрузку."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    _send(client, chat_id, "привет")
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    answer = [m for m in messages if m["role"] == "assistant"][-1]
+    assert answer["stats"] is not None
+    assert answer["stats"]["completion_tokens"] == 25
+    assert answer["stats"]["tokens_per_second"] == 18.5
+    user_msg = [m for m in messages if m["role"] == "user"][-1]
+    assert user_msg["stats"] is None

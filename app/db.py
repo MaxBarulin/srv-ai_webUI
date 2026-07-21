@@ -132,6 +132,8 @@ _COLUMN_MIGRATIONS = [
     # Пер-чатовые тумблеры «Заметки/Календарь» и «Размышления» (§15)
     ("chats", "use_tools", "INTEGER NOT NULL DEFAULT 1"),
     ("chats", "enable_thinking", "INTEGER NOT NULL DEFAULT 1"),
+    # Статистика генерации ответа (токены, скорость, контекст) — под ответом
+    ("messages", "stats_json", "TEXT"),
 ]
 
 DEFAULT_SPECIALIZATIONS = [
