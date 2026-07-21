@@ -339,6 +339,37 @@ function applyFontScale(scale) {
   });
 }
 
+// --- Тема оформления (светлая / тёмная / как в системе) ---
+// Хранится в localStorage (мгновенно, без сервера); раннее применение —
+// инлайн-скриптом в <head>, здесь только реакция на выбор и подсветка.
+
+function currentTheme() {
+  try { return localStorage.getItem("theme") || "light"; } catch { return "light"; }
+}
+
+function applyTheme(theme) {
+  const dark = theme === "dark" ||
+    (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  document.querySelectorAll("#theme-select button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.theme === theme);
+  });
+}
+
+function setTheme(theme) {
+  try { localStorage.setItem("theme", theme); } catch { /* приватный режим */ }
+  applyTheme(theme);
+}
+
+function initTheme() {
+  applyTheme(currentTheme());
+  // Если выбрано «как в системе» — реагируем на смену системной темы
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (currentTheme() === "system") applyTheme("system");
+  });
+}
+
 async function setFontScale(scale) {
   try {
     await api("/api/me/settings", { method: "POST", body: { font_scale: scale } });
@@ -457,6 +488,11 @@ async function init() {
   document.getElementById("font-scale").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-scale]");
     if (btn) setFontScale(Number(btn.dataset.scale));
+  });
+  initTheme();
+  document.getElementById("theme-select").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-theme]");
+    if (btn) setTheme(btn.dataset.theme);
   });
   document.getElementById("password-form").addEventListener("submit", changePassword);
 
