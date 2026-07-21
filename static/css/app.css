@@ -68,10 +68,14 @@
   --font-text: "PT Sans", "Segoe UI", Arial, sans-serif;
   --cut: 14px;    /* величина диагонального среза */
   --radius: 8px;  /* скругление интерактивных элементов */
+  color-scheme: light;
 }
 
 /* --- Тёмная тема (data-theme="dark" на <html>) --- */
 :root[data-theme="dark"] {
+  /* браузер рисует нативные элементы (скроллбары, спиннеры чисел, уголок
+     растягивания textarea, календарь) в тёмном стиле, а не из светлой темы */
+  color-scheme: dark;
   --osk-red: #E23744;        /* акцент чуть ярче — на тёмном насыщенный глохнет */
   --osk-red-dark: #C62A38;
   --osk-slate: #8A97A2;
@@ -149,7 +153,9 @@ h1, h2, h3, .display {
 
 /* --- Поля форм --- */
 label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--osk-slate); }
-input[type="text"], input[type="password"], select {
+input[type="text"], input[type="password"], input[type="number"],
+input[type="email"], input[type="search"], input[type="date"],
+input[type="time"], input[type="datetime-local"], input:not([type]), select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--osk-line);
