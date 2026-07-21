@@ -193,15 +193,46 @@ def test_pdf_scan_page_limit(monkeypatch):
     assert any("обрезан" in w for w in doc.warnings)
 
 
-def test_pdf_text_layer_preferred(monkeypatch):
+def test_pdf_default_vision_ignores_text_layer(monkeypatch):
+    """По умолчанию (pdf_mode=vision) PDF идёт в картинки, даже если есть
+    текстовый слой — модель «видит» лист."""
+    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=10))
+    monkeypatch.setattr(documents, "_pdf_text",
+                        lambda data: "Есть текстовый слой, но он игнорируется")
+    monkeypatch.setattr(documents, "_pdf_rasterize",
+                        lambda data, max_pages: [_png_bytes()])
+    doc = parse_upload("doc.pdf", "application/pdf", b"%PDF fake")
+    assert doc.text == ""
+    assert len(doc.images) == 1
+
+
+def test_pdf_text_mode_extracts_text(monkeypatch):
+    """pdf_mode=text — берём только текстовый слой, растеризация не вызывается."""
     monkeypatch.setattr(documents, "_pdf_text", lambda data: "Извлечённый текст PDF")
     called = {"raster": False}
     monkeypatch.setattr(documents, "_pdf_rasterize",
                         lambda *a: called.__setitem__("raster", True) or [])
-    doc = parse_upload("doc.pdf", "application/pdf", b"%PDF fake")
+    doc = parse_upload("doc.pdf", "application/pdf", b"%PDF fake", pdf_mode="text")
     assert doc.text == "Извлечённый текст PDF"
     assert doc.images == []
-    assert called["raster"] is False  # растеризация не вызывалась
+    assert called["raster"] is False
+
+
+def test_pdf_text_mode_no_layer_errors(monkeypatch):
+    """pdf_mode=text на скане без текста — понятная ошибка, а не пустышка."""
+    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
+    with pytest.raises(DocumentError, match="текстового слоя"):
+        parse_upload("scan.pdf", "application/pdf", b"%PDF fake", pdf_mode="text")
+
+
+def test_pdf_auto_mode_falls_back_to_vision(monkeypatch):
+    """pdf_mode=auto — текст, если есть; иначе картинки (прежнее поведение)."""
+    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=10))
+    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
+    monkeypatch.setattr(documents, "_pdf_rasterize",
+                        lambda data, max_pages: [_png_bytes()])
+    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake", pdf_mode="auto")
+    assert len(doc.images) == 1
 
 
 

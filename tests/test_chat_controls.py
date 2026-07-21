@@ -241,6 +241,22 @@ def test_chat_toggles_persisted(client, ctrl_user):
     assert chat["use_tools"] == 0 and chat["enable_thinking"] == 0
 
 
+def test_pdf_mode_persisted(client, ctrl_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    # дефолт — vision (PDF как картинка)
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["pdf_mode"] == "vision"
+
+    assert client.put(f"/api/chats/{chat_id}",
+                      json={"pdf_mode": "text"}).status_code == 200
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["pdf_mode"] == "text"
+
+    # недопустимое значение отвергается
+    assert client.put(f"/api/chats/{chat_id}",
+                      json={"pdf_mode": "neon"}).status_code == 400
+
+
 def test_stats_persisted_on_assistant_message(client, ctrl_user):
     """Статистика генерации сохраняется в сообщении и возвращается в истории —
     показывается компактно под ответом и переживает перезагрузку."""

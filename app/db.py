@@ -134,6 +134,8 @@ _COLUMN_MIGRATIONS = [
     # Пер-чатовые тумблеры «Заметки/Календарь» и «Размышления» (§15)
     ("chats", "use_tools", "INTEGER NOT NULL DEFAULT 1"),
     ("chats", "enable_thinking", "INTEGER NOT NULL DEFAULT 1"),
+    # Режим парсинга PDF: 'vision' (страницы → mmproj) или 'text' (pypdf)
+    ("chats", "pdf_mode", "TEXT NOT NULL DEFAULT 'vision'"),
     # Статистика генерации ответа (токены, скорость, контекст) — под ответом
     ("messages", "stats_json", "TEXT"),
 ]

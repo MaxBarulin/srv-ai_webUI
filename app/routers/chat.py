@@ -52,6 +52,7 @@ class ChatUpdateRequest(BaseModel):
     custom_prompt: str | None = None
     use_tools: bool | None = None         # пер-чатовый тумблер «Заметки/Календарь»
     enable_thinking: bool | None = None   # пер-чатовый тумблер «Размышления»
+    pdf_mode: str | None = None           # режим парсинга PDF: vision | text | auto
 
 
 class Attachment(BaseModel):
@@ -71,7 +72,7 @@ class SendMessageRequest(BaseModel):
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
     cursor = await db.execute(
         "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
-        "created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
+        "pdf_mode, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
     row = await cursor.fetchone()
@@ -87,7 +88,7 @@ async def list_chats(
 ) -> list[dict]:
     cursor = await db.execute(
         "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
-        "created_at, updated_at FROM chats WHERE user_id = ? "
+        "pdf_mode, created_at, updated_at FROM chats WHERE user_id = ? "
         "ORDER BY updated_at DESC, id DESC",
         (user["id"],),
     )
@@ -117,7 +118,7 @@ async def create_chat(
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
             "custom_prompt": custom_prompt, "use_tools": 1, "enable_thinking": 1,
-            "created_at": now, "updated_at": now}
+            "pdf_mode": "vision", "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")
@@ -156,10 +157,16 @@ async def update_chat(
     if "enable_thinking" in provided and payload.enable_thinking is not None:
         enable_thinking = int(payload.enable_thinking)
 
+    pdf_mode = row["pdf_mode"]
+    if "pdf_mode" in provided and payload.pdf_mode is not None:
+        if payload.pdf_mode not in ("vision", "text", "auto"):
+            raise HTTPException(status_code=400, detail="Недопустимый режим PDF")
+        pdf_mode = payload.pdf_mode
+
     await db.execute(
         "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, "
-        "use_tools = ?, enable_thinking = ?, updated_at = ? WHERE id = ?",
-        (title, spec_id, custom_prompt, use_tools, enable_thinking,
+        "use_tools = ?, enable_thinking = ?, pdf_mode = ?, updated_at = ? WHERE id = ?",
+        (title, spec_id, custom_prompt, use_tools, enable_thinking, pdf_mode,
          utcnow_iso(), chat_id),
     )
     await db.commit()

@@ -75,6 +75,7 @@ export function initChat(toast) {
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
   els.ctxThink = $("ctx-think");
+  els.ctxPdf = $("ctx-pdf");
   els.examples = $("chat-examples");
   els.attachBtn = $("chat-attach-btn");
   els.fileInput = $("chat-file");
@@ -130,6 +131,8 @@ export function initChat(toast) {
     () => saveChatToggle("use_tools", els.ctxTools.checked));
   els.ctxThink.addEventListener("change",
     () => saveChatToggle("enable_thinking", els.ctxThink.checked));
+  els.ctxPdf.addEventListener("change",
+    () => saveChatToggle("pdf_mode", els.ctxPdf.checked ? "vision" : "text"));
 
   // Отслеживаем, у нижней ли границы бегунок. Если пользователь поднял его —
   // отключаем автоскролл, пока сам не вернётся вниз.
@@ -219,12 +222,14 @@ function applyChatToggles() {
   if (!chat) return;
   els.ctxTools.checked = Boolean(chat.use_tools);
   els.ctxThink.checked = Boolean(chat.enable_thinking);
+  els.ctxPdf.checked = (chat.pdf_mode || "vision") !== "text";
 }
 
 async function saveChatToggle(field, value) {
   const chat = activeChat();
   if (!chat) return;
-  chat[field] = value ? 1 : 0; // оптимистично, чтобы UI не мигал
+  // оптимистично, чтобы UI не мигал: bool → 1/0, строки (pdf_mode) — как есть
+  chat[field] = typeof value === "boolean" ? (value ? 1 : 0) : value;
   try {
     const updated = await api(`/api/chats/${chat.id}`, { method: "PUT",
       body: { [field]: value } });
@@ -304,6 +309,10 @@ async function onFileSelected() {
   try {
     const form = new FormData();
     form.append("file", file);
+    // Для PDF — режим парсинга из тумблера чата: картинка (vision) или текст
+    if (/\.pdf$/i.test(file.name)) {
+      form.append("pdf_mode", els.ctxPdf.checked ? "vision" : "text");
+    }
     const r = await fetch("/api/attachments", { method: "POST", body: form });
     if (r.status === 401) { location.href = "/login"; return; }
     const data = await r.json().catch(() => ({}));

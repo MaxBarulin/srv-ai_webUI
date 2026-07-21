@@ -228,12 +228,24 @@ def _pdf_rasterize(data: bytes, max_pages: int) -> list[bytes]:
         return [p.read_bytes() for p in pages]
 
 
-def _parse_pdf(data: bytes, doc: ParsedDocument) -> None:
-    text = _pdf_text(data)
-    if text:
-        doc.text = text
-        return
-    # Текстового слоя нет — скан. Распознаёт сама мультимодальная модель (vision).
+def _parse_pdf(data: bytes, doc: ParsedDocument, mode: str = "vision") -> None:
+    """Режимы:
+    - 'vision' (по умолчанию): страницы → картинки → mmproj (модель «видит» лист:
+       вёрстку, таблицы, формулы, чертежи, сканы);
+    - 'text': только текстовый слой (pypdf), дёшево; если слоя нет — ошибка;
+    - 'auto': текст, если он есть, иначе vision (прежнее поведение).
+    """
+    if mode in ("text", "auto"):
+        text = _pdf_text(data)
+        if text:
+            doc.text = text
+            return
+        if mode == "text":
+            raise DocumentError(
+                "В PDF нет текстового слоя — выберите режим «как картинку»")
+        # auto: текста нет → падаем в vision ниже
+
+    # vision (по умолчанию) или auto без текста — распознаёт мультимодальная модель
     max_pages = settings.vision_max_pages
     images = _pdf_rasterize(data, max_pages + 1)
     if len(images) > max_pages:
@@ -241,13 +253,14 @@ def _parse_pdf(data: bytes, doc: ParsedDocument) -> None:
         doc.warnings.append(
             f"PDF обрезан до {max_pages} страниц (лимит vision), остальное не обработано")
     if not images:
-        raise DocumentError("PDF не содержит ни текста, ни страниц для распознавания")
+        raise DocumentError("PDF не содержит страниц для распознавания")
     doc.images = [_image_to_data_url(img) for img in images]
 
 
 # --- Точка входа ---
 
-def parse_upload(filename: str, content_type: str, data: bytes) -> ParsedDocument:
+def parse_upload(filename: str, content_type: str, data: bytes,
+                 pdf_mode: str = "vision") -> ParsedDocument:
     ext = validate(filename, content_type, len(data))
     doc = ParsedDocument(filename=filename)
 
@@ -262,7 +275,7 @@ def parse_upload(filename: str, content_type: str, data: bytes) -> ParsedDocumen
     elif ext in (".png", ".jpg", ".jpeg"):
         doc.images = [_image_to_data_url(data)]
     elif ext == ".pdf":
-        _parse_pdf(data, doc)
+        _parse_pdf(data, doc, pdf_mode)
 
     if not doc.text.strip() and not doc.images:
         raise DocumentError("Из файла не извлечено ни текста, ни изображений")
