@@ -193,6 +193,18 @@ def test_pdf_scan_page_limit(monkeypatch):
     assert any("обрезан" in w for w in doc.warnings)
 
 
+def test_pdf_vision_all_pages_when_no_limit(monkeypatch):
+    """VISION_MAX_PAGES=0 — отправляем ВСЕ страницы, без обрезки."""
+    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=0))
+    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
+    # 12 страниц — при старом лимите 10 обрезалось бы; теперь все 12
+    monkeypatch.setattr(documents, "_pdf_rasterize",
+                        lambda data, max_pages: [_png_bytes() for _ in range(12)])
+    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
+    assert len(doc.images) == 12
+    assert not any("обрезан" in w for w in doc.warnings)
+
+
 def test_pdf_default_vision_ignores_text_layer(monkeypatch):
     """По умолчанию (pdf_mode=vision) PDF идёт в картинки, даже если есть
     текстовый слой — модель «видит» лист."""

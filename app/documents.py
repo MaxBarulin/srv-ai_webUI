@@ -208,15 +208,17 @@ def _pdf_text(data: bytes) -> str:
 
 
 def _pdf_rasterize(data: bytes, max_pages: int) -> list[bytes]:
-    """Растеризовать первые max_pages страниц PDF в PNG через pdftoppm."""
+    """Растеризовать страницы PDF в PNG через pdftoppm.
+    max_pages > 0 — первые N страниц; max_pages <= 0 — все страницы."""
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "in.pdf"
         src.write_bytes(data)
+        cmd = ["pdftoppm", "-png", "-r", "150"]
+        if max_pages and max_pages > 0:
+            cmd += ["-l", str(max_pages)]
+        cmd += [str(src), str(Path(tmp) / "page")]
         try:
-            subprocess.run(
-                ["pdftoppm", "-png", "-r", "150", "-l", str(max_pages),
-                 str(src), str(Path(tmp) / "page")],
-                check=True, capture_output=True, timeout=120)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
         except FileNotFoundError:
             raise DocumentError(
                 "Растеризация PDF недоступна: не установлен poppler-utils (pdftoppm)")
@@ -245,15 +247,26 @@ def _parse_pdf(data: bytes, doc: ParsedDocument, mode: str = "vision") -> None:
                 "В PDF нет текстового слоя — выберите режим «как картинку»")
         # auto: текста нет → падаем в vision ниже
 
-    # vision (по умолчанию) или auto без текста — распознаёт мультимодальная модель
+    # vision (по умолчанию) или auto без текста — распознаёт мультимодальная модель.
+    # Каждая страница — отдельная полная картинка. По умолчанию берём ВСЕ страницы
+    # (VISION_MAX_PAGES=0); положительный лимит — предохранитель от переполнения
+    # контекста (каждая страница = картинка на сотни-тысячи токенов).
     max_pages = settings.vision_max_pages
-    images = _pdf_rasterize(data, max_pages + 1)
-    if len(images) > max_pages:
-        images = images[:max_pages]
-        doc.warnings.append(
-            f"PDF обрезан до {max_pages} страниц (лимит vision), остальное не обработано")
+    if max_pages and max_pages > 0:
+        images = _pdf_rasterize(data, max_pages + 1)
+        if len(images) > max_pages:
+            images = images[:max_pages]
+            doc.warnings.append(
+                f"PDF обрезан до {max_pages} страниц (VISION_MAX_PAGES), "
+                "остальное не обработано")
+    else:
+        images = _pdf_rasterize(data, 0)  # все страницы
     if not images:
         raise DocumentError("PDF не содержит страниц для распознавания")
+    if len(images) >= 15:
+        doc.warnings.append(
+            f"{len(images)} страниц отправлены картинками — это заметно заполнит "
+            "контекст модели (следите за процентом контекста)")
     doc.images = [_image_to_data_url(img) for img in images]
 
 
