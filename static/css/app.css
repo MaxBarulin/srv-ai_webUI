@@ -207,6 +207,11 @@ input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -
   color: #C7CDD2;
   display: flex;
   flex-direction: column;
+  /* grid-элемент по умолчанию min-height:auto — длинный список чатов/заметок
+     распирал колонку выше 100vh вместо прокрутки. Фиксируем высоту колонки,
+     внутренняя прокрутка — в .chat-list / .notes-list */
+  min-height: 0;
+  overflow: hidden;
 }
 .sidebar .brand {
   padding: 18px 20px 16px;
