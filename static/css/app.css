@@ -873,6 +873,24 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   font-size: 13px;
   font-family: Consolas, "Courier New", monospace;
 }
+/* Безопасные inline-теги из ответа модели (§13): sub/sup работают дефолтно;
+   mark/kbd приводим к теме (полупрозрачный тон адаптируется и к светлой, и к
+   тёмной — не выпадает ярко-жёлтым). Применяем в чате, размышлениях и заметках. */
+.msg-body mark, .reasoning-body mark, #note-view-body mark, #note-edit-preview mark {
+  background: rgba(198, 40, 40, 0.18);
+  color: inherit;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.msg-body kbd, .reasoning-body kbd, #note-view-body kbd, #note-edit-preview kbd {
+  background: var(--osk-bg);
+  border: 1px solid var(--osk-line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 12px;
+  font-family: Consolas, "Courier New", monospace;
+}
 .code-block { position: relative; margin: 12px 0; }
 .code-block pre {
   margin: 0;

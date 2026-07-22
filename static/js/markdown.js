@@ -55,11 +55,35 @@ function renderMathPlaceholders(html, store) {
   });
 }
 
+// «Безопасные» HTML-теги, которые модель может прислать в ответе и которые мы
+// возвращаем из экранированного вида обратно в разметку (§13). Только простые
+// презентационные теги БЕЗ атрибутов — XSS-вектора не несут. Всё остальное
+// (script, img, a, iframe, style, обработчики событий, любые атрибуты) остаётся
+// экранированным и показывается как текст.
+const SAFE_TAGS = ["br", "sub", "sup", "b", "strong", "i", "em",
+                   "u", "s", "del", "ins", "mark", "small", "kbd"];
+const SAFE_PAIRED = SAFE_TAGS.filter((t) => t !== "br").join("|");
+const SAFE_BR_RE = /&lt;br\s*\/?&gt;/gi;                       // <br>, <br/>, <br />
+const SAFE_PAIRED_RE = new RegExp(`&lt;(/?)(${SAFE_PAIRED})&gt;`, "gi");
+
+// Восстанавливаем ТОЛЬКО точные теги из белого списка без атрибутов: после имени
+// тега сразу идёт &gt; (то есть исходный `>`), поэтому `<img ... onerror=...>`
+// или `<sub class=...>` не совпадут и останутся экранированными.
+function restoreSafeTags(escaped) {
+  return escaped
+    .replace(SAFE_BR_RE, "<br>")
+    .replace(SAFE_PAIRED_RE, (_, slash, name) => `<${slash}${name.toLowerCase()}>`);
+}
+
 function inline(text) {
-  return text
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  // Выделяем инлайн-код, чтобы ни разметка (**жирный**, *курсив*), ни
+  // «безопасные теги» внутри `код` не срабатывали — содержимое кода буквальное.
+  return text.split(/(`[^`]+`)/).map((part, idx) => {
+    if (idx % 2 === 1) return `<code>${part.slice(1, -1)}</code>`;
+    return restoreSafeTags(part)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  }).join("");
 }
 
 function flushList(state, html) {
