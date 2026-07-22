@@ -18,7 +18,7 @@
 |---------------------|-----------------|
 | установка в `/opt`, системный юзер | ставим в свою домашнюю папку под своим логином |
 | `apt install python3` | Miniconda (ставится в домашнюю папку, без root) |
-| `apt install poppler-utils` | `conda install poppler` (без root) или пропустить |
+| `apt install poppler-utils` | не нужен: PDF растеризует `pypdfium2` (pip-wheel, ставится из `requirements.txt`) |
 | systemd в `/etc/systemd/system` | `tmux`/`nohup` + `@reboot` в пользовательском crontab |
 | firewall для портов 8000/8001 | запустить llama.cpp с `--host 127.0.0.1` |
 
@@ -55,17 +55,19 @@ pip install --use-pep517 docopt
 pip install -r requirements.txt
 ```
 
-## Шаг 3. poppler без root (для PDF-сканов, опционально)
+## Шаг 3. Растеризация PDF — уже включена, ничего ставить не надо
 
-Только если нужны PDF-сканы (картинки). Обычные PDF/docx/xlsx работают без него.
-- Если используешь **conda**: `conda install -c conda-forge poppler`
-- Иначе можно пропустить — при загрузке скана будет понятная ошибка, остальное
-  работает.
+Режим «PDF как картинку» (страницы → изображения для vision-модели) работает
+из коробки: пакет **`pypdfium2`** из `requirements.txt` содержит движок PDFium
+прямо в wheel — **системный poppler не нужен**, ставится офлайн и без root.
 
-Проверка: `pdftoppm -h` должна показать справку.
+Резервный путь на `pdftoppm` (poppler-utils) остаётся в коде, но нужен, только
+если `pypdfium2` по какой-то причине не установлен:
+- через **conda**: `conda install -c conda-forge poppler`;
+- проверка: `pdftoppm -h` покажет справку.
 
 > ⚠️ `pip install poppler-utils` — **НЕ то**: это пустышка (пакет-заглушка),
-> `pdftoppm` она не даёт. Нужен именно системный poppler или `conda install poppler`.
+> `pdftoppm` она не даёт. Но при установленном `pypdfium2` poppler и не требуется.
 
 ## Шаг 4. Настроить `.env`
 ```

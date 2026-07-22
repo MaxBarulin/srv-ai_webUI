@@ -247,6 +247,51 @@ def test_pdf_auto_mode_falls_back_to_vision(monkeypatch):
     assert len(doc.images) == 1
 
 
+def _blank_pdf(pages: int) -> bytes:
+    from pypdf import PdfWriter
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=300, height=400)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def test_pdf_rasterize_pypdfium2_real():
+    """Растеризация реальным pypdfium2 (без poppler): PNG на каждую страницу."""
+    from PIL import Image
+
+    images = documents._pdf_rasterize(_blank_pdf(3), 0)
+    assert len(images) == 3
+    for png in images:
+        img = Image.open(io.BytesIO(png))
+        assert img.format == "PNG"
+        assert img.width > 0 and img.height > 0
+
+
+def test_pdf_rasterize_page_limit_real():
+    """max_pages ограничивает число растеризованных страниц."""
+    images = documents._pdf_rasterize(_blank_pdf(5), 2)
+    assert len(images) == 2
+
+
+def test_pdf_rasterize_broken_pdf_errors():
+    """Битый PDF → понятная DocumentError, а не сырое исключение PDFium."""
+    with pytest.raises(DocumentError):
+        documents._pdf_rasterize(b"%PDF-1.4 not really a pdf", 0)
+
+
+def test_pdf_rasterize_falls_back_to_poppler(monkeypatch):
+    """Если pypdfium2 не установлен — откат на pdftoppm (poppler)."""
+    def _no_pdfium(data, max_pages):
+        raise ImportError("No module named 'pypdfium2'")
+
+    monkeypatch.setattr(documents, "_pdf_rasterize_pdfium", _no_pdfium)
+    monkeypatch.setattr(documents, "_pdf_rasterize_poppler",
+                        lambda data, max_pages: [_png_bytes()])
+    assert documents._pdf_rasterize(b"%PDF fake", 0) == [_png_bytes()]
+
+
 
 
 # --- Endpoint загрузки ---

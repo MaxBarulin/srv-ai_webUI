@@ -345,7 +345,7 @@ footer b{color:#D6DEE3}
                        └─ статика (index.html, css, js, шрифты)</pre></div>
   <div class="doc-block"><h4>Стек и зависимости</h4><ul>
     <li><b>Backend:</b> Python 3.10+, FastAPI, uvicorn, httpx (SSE), aiosqlite, bcrypt</li>
-    <li><b>Документы:</b> python-docx, openpyxl, pypdf, Pillow; системно - poppler-utils (pdftoppm)</li>
+    <li><b>Документы:</b> python-docx, openpyxl, pypdf, Pillow, pypdfium2 (растеризация PDF - без системных пакетов)</li>
     <li><b>Фильтр ПДн:</b> natasha, slovnet, navec (NER ФИО, офлайн)</li>
     <li><b>Frontend:</b> статические HTML/CSS/JS без сборки; локальные шрифты и вендоры</li>
     <li>Минимум зависимостей - код обозрим для аудита ИБ</li></ul></div>

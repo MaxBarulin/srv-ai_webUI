@@ -7,8 +7,9 @@
 ИБ:
 - docx — защита от zip-бомб (лимит суммарного распакованного размера);
 - изображения перекодируются через Pillow (отсечение метаданных/полиглотов);
-- PDF: приоритет — текстовый слой (pypdf), дешевле по токенам; скан —
-  растеризация pdftoppm и передача модели как изображения (vision, mmproj).
+- PDF: в режиме «как картинку» страницы растеризуются (pypdfium2 — PDFium в
+  самом pip-wheel, без системных пакетов; откат на pdftoppm/poppler) и уходят
+  модели как изображения (vision, mmproj); режим «как текст» — слой pypdf.
 
 Изображения и сканы распознаёт сама мультимодальная модель (llama.cpp с mmproj).
 """
@@ -207,13 +208,55 @@ def _pdf_text(data: bytes) -> str:
     return "\n\n".join(p for p in parts if p.strip()).strip()
 
 
+RASTER_DPI = 150  # разрешение растеризации (и pdftoppm -r, и pypdfium2)
+
+
 def _pdf_rasterize(data: bytes, max_pages: int) -> list[bytes]:
-    """Растеризовать страницы PDF в PNG через pdftoppm.
-    max_pages > 0 — первые N страниц; max_pages <= 0 — все страницы."""
+    """Растеризовать страницы PDF в PNG.
+    max_pages > 0 — первые N страниц; max_pages <= 0 — все страницы.
+
+    Приоритет — pypdfium2 (чистый pip-wheel, PDFium внутри пакета: без системных
+    пакетов и без root, ставится офлайн). Если пакет не установлен — откат на
+    системный pdftoppm (poppler-utils)."""
+    try:
+        return _pdf_rasterize_pdfium(data, max_pages)
+    except ImportError:
+        return _pdf_rasterize_poppler(data, max_pages)
+
+
+def _pdf_rasterize_pdfium(data: bytes, max_pages: int) -> list[bytes]:
+    import pypdfium2 as pdfium  # PDFium в самом wheel — системный poppler не нужен
+
+    try:
+        pdf = pdfium.PdfDocument(data)
+    except pdfium.PdfiumError as exc:
+        raise DocumentError(f"Не удалось прочитать PDF: {exc}") from exc
+    try:
+        total = len(pdf)
+        limit = min(total, max_pages) if (max_pages and max_pages > 0) else total
+        out: list[bytes] = []
+        for i in range(limit):
+            page = pdf[i]
+            try:
+                pil = page.render(scale=RASTER_DPI / 72).to_pil().convert("RGB")
+            except pdfium.PdfiumError as exc:
+                raise DocumentError(f"Ошибка растеризации PDF: {exc}") from exc
+            finally:
+                page.close()
+            buf = io.BytesIO()
+            pil.save(buf, format="PNG")
+            out.append(buf.getvalue())
+        return out
+    finally:
+        pdf.close()
+
+
+def _pdf_rasterize_poppler(data: bytes, max_pages: int) -> list[bytes]:
+    """Резервный путь: системный pdftoppm (poppler-utils)."""
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "in.pdf"
         src.write_bytes(data)
-        cmd = ["pdftoppm", "-png", "-r", "150"]
+        cmd = ["pdftoppm", "-png", "-r", str(RASTER_DPI)]
         if max_pages and max_pages > 0:
             cmd += ["-l", str(max_pages)]
         cmd += [str(src), str(Path(tmp) / "page")]
@@ -221,7 +264,8 @@ def _pdf_rasterize(data: bytes, max_pages: int) -> list[bytes]:
             subprocess.run(cmd, check=True, capture_output=True, timeout=300)
         except FileNotFoundError:
             raise DocumentError(
-                "Растеризация PDF недоступна: не установлен poppler-utils (pdftoppm)")
+                "Растеризация PDF недоступна: установите пакет pypdfium2 "
+                "(pip install pypdfium2) или системный poppler-utils (pdftoppm)")
         except subprocess.CalledProcessError as exc:
             raise DocumentError(f"Ошибка растеризации PDF: {exc.stderr[:200]!r}")
         except subprocess.TimeoutExpired:
