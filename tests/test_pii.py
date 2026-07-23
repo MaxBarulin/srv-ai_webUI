@@ -90,24 +90,73 @@ def test_whitelist_excludes(monkeypatch, tmp_path):
     assert "zavod.ru" in pii_module._whitelist()
 
 
-def test_ner_masks_full_name():
-    # NER-модель установлена в окружении; при отсутствии тест будет пропущен
-    if not pii_module._load_ner():
-        pytest.skip("NER-модель недоступна")
+def test_name_masks_full_fio():
     r = mask("Приказ подписал Иванов Иван Иванович, начальник цеха.")
     assert "[ФИО]" in r.text
     assert "Иванов" not in r.text
-    assert r.counts.get("ФИО", 0) >= 1
+    assert r.counts.get("ФИО", 0) == 1
 
 
-def test_ner_whitelist_keeps_name(monkeypatch):
-    if not pii_module._load_ner():
-        pytest.skip("NER-модель недоступна")
+def test_name_masks_initials():
+    r = mask("Ответственный Петров П.П., согласовано с Сидоровой А.И.")
+    assert r.counts.get("ФИО", 0) == 2
+    assert "Петров" not in r.text and "Сидоровой" not in r.text
+
+
+def test_name_masks_first_plus_surname():
+    r = mask("Сергей Кузнецов и Мария Петрова провели контроль.")
+    assert r.counts.get("ФИО", 0) == 2
+
+
+def test_name_masks_patronymic_pair():
+    r = mask("Бригадир Ольга Васильевна утвердила график.")
+    assert "[ФИО]" in r.text
+    assert "Ольга" not in r.text
+
+
+def test_name_masks_weak_patronymic_with_first_name():
+    r = mask("Мастер Иван Ильич принял смену.")
+    assert "[ФИО]" in r.text
+    assert "Ильич" not in r.text
+
+
+def test_name_masks_hyphenated_surname_initials():
+    r = mask("Согласовал Римский-Корсаков Н.А.")
+    assert "[ФИО]" in r.text
+    assert "Корсаков" not in r.text
+
+
+# --- Отсутствие ложных срабатываний на технических терминах ---
+
+@pytest.mark.parametrize("text", [
+    "Марка стали 09Г2С по ГОСТ 19281 применяется для корпусов.",
+    "Токарный станок с ЧПУ, режим Черновая обработка.",
+    "Раздел Механообработка. Пункт Сварка. Контроль по Шаблону.",
+    "Приёмка партии Проката. Аттестация Сварщиков в четверг.",
+    "Расчёт по методике Стьюдента, критерий Фишера.",
+    "Совещание по Нормированию. Повестка: План на квартал.",
+])
+def test_no_false_positive_on_terms(text):
+    r = mask(text)
+    assert r.counts.get("ФИО", 0) == 0
+    assert "[ФИО]" not in r.text
+
+
+@pytest.mark.parametrize("text", [
+    "Начальник участка Николай проверил партию.",   # одиночное имя без фамилии
+    "Инженер Роман составил отчёт.",                 # имя-омоним без фамилии
+])
+def test_lone_first_name_not_masked(text):
+    # одиночное имя без второго сигнала не маскируем (защита от омонимов)
+    assert mask(text).counts.get("ФИО", 0) == 0
+
+
+def test_name_whitelist_keeps_name(monkeypatch):
     import app.pii as p
-
     monkeypatch.setattr(p, "_whitelist", lambda: {"иванов иван иванович"})
     r = mask("Документ утвердил Иванов Иван Иванович.")
     assert "Иванов Иван Иванович" in r.text
+    assert "[ФИО]" not in r.text
 
 
 # --- Интеграция с чатом ---

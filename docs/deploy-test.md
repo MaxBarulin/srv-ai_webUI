@@ -38,7 +38,7 @@ LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_MODEL=имя_твоей_модели
 LLM_CONTEXT_SIZE=32768        # свой n_ctx (для показа % контекста)
 RAG_ENABLED=false             # LightRAG нет — переключатель «База знаний» скрыт
-PII_FILTER=false              # для быстрого теста; true — если поставил natasha
+PII_FILTER=false              # для быстрого теста; true — включить маскирование ПДн
 ```
 
 ## 4. Запустить UI

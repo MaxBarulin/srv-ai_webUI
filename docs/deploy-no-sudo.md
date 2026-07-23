@@ -49,11 +49,6 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
-Если на установке `natasha` падает `Failed building wheel for docopt`:
-```
-pip install --use-pep517 docopt
-pip install -r requirements.txt
-```
 
 ## Шаг 3. Растеризация PDF — уже включена, ничего ставить не надо
 
