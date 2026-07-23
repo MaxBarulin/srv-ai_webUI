@@ -151,6 +151,27 @@ def test_lone_first_name_not_masked(text):
     assert mask(text).counts.get("ФИО", 0) == 0
 
 
+@pytest.mark.parametrize("text", [
+    "Подпись ______________ И.О. Фамилия",   # строка подписи бланка
+    "(подпись)          Фамилия И.О.",
+])
+def test_form_placeholder_not_masked(text):
+    # шаблон бланка «И.О. Фамилия» — не ПДн, маскировать не нужно
+    assert mask(text).counts.get("ФИО", 0) == 0
+
+
+def test_real_document_names_and_no_false_positives():
+    # Фрагмент реального стандарта: аббревиатуры/заголовки не маскируются, ФИО — да
+    text = ("УТВЕРЖДАЮ Врио генерального директора А.В. Быстров. "
+            "Нормы устанавливаются УТПП и УОТиСР по ГОСТ 3.1109 в ИИС «Адмирал». "
+            "Согласовал начальник ОНУиАТПКиС Р.С. Аверкиев.")
+    r = mask(text)
+    assert r.counts.get("ФИО", 0) == 2               # Быстров, Аверкиев
+    assert "Быстров" not in r.text and "Аверкиев" not in r.text
+    for term in ("УТПП", "УОТиСР", "ГОСТ", "Адмирал", "ОНУиАТПКиС", "Врио"):
+        assert term in r.text                        # термины не задеты
+
+
 def test_name_whitelist_keeps_name(monkeypatch):
     import app.pii as p
     monkeypatch.setattr(p, "_whitelist", lambda: {"иванов иван иванович"})
