@@ -186,6 +186,9 @@ async def delete_event(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
     row = await _get_visible_event(db, event_id, user["id"])
+    # Удалить может только автор (общее событие видят все, но чужое не удаляют)
+    if row["owner_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Удалить событие может только его автор")
     await db.execute("DELETE FROM events WHERE id = ?", (event_id,))
     await db.commit()
     await write_audit(db, user_id=user["id"], action="event_deleted",

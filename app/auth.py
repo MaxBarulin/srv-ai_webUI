@@ -24,6 +24,12 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
+# Фиктивный хеш для входа несуществующего пользователя: bcrypt всё равно
+# выполняется, чтобы время ответа не выдавало, существует логин или нет
+# (защита от перечисления логинов по таймингу).
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(16))
+
+
 def verify_password(password: str, pass_hash: str) -> bool:
     try:
         return bcrypt.checkpw(password.encode("utf-8"), pass_hash.encode("ascii"))

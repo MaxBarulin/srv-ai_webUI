@@ -84,6 +84,20 @@ def test_shared_notes_editable_by_all_with_updated_by(client, make_user, two_use
     assert c.put(f"/api/notes/{note_id}", json={"scope": "personal"}).status_code == 200
 
 
+def test_shared_note_delete_only_by_author(client, make_user, two_users):
+    c = two_users("alice")
+    note_id = c.post("/api/notes", json={"title": "Общая", "scope": "shared"}).json()["id"]
+
+    # Боб видит общую заметку и может её править, но удалить чужую — нельзя
+    c = two_users("bob")
+    assert c.delete(f"/api/notes/{note_id}").status_code == 403
+    assert c.get(f"/api/notes/{note_id}").status_code == 200  # на месте
+
+    # автор — удаляет
+    c = two_users("alice")
+    assert c.delete(f"/api/notes/{note_id}").status_code == 200
+
+
 def test_search_and_tag_filter(client, make_user, two_users):
     c = two_users("alice")
     c.post("/api/notes", json={"title": "Сварка швов", "body": "аргон", "tags": ["сварка"]})

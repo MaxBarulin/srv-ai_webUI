@@ -10,6 +10,7 @@ from app.audit import write_audit
 from app.config import settings
 from app.auth import (
     SESSION_COOKIE,
+    _DUMMY_PASSWORD_HASH,
     client_ip,
     create_session,
     delete_session,
@@ -51,7 +52,11 @@ async def login(
     )
     row = await cursor.fetchone()
 
-    if row is None or not verify_password(payload.password, row["pass_hash"]):
+    # bcrypt выполняется всегда (для несуществующего логина — против фиктивного
+    # хеша), чтобы по времени ответа нельзя было отличить неверный пароль от
+    # несуществующего пользователя (перечисление логинов по таймингу).
+    pass_hash = row["pass_hash"] if row is not None else _DUMMY_PASSWORD_HASH
+    if row is None or not verify_password(payload.password, pass_hash):
         login_rate_limiter.register(ip)
         await write_audit(db, user_id=row["id"] if row else None, action="login_failed",
                           details=f"login={payload.login}", ip=ip)
@@ -153,6 +158,13 @@ async def change_password(
     await db.execute(
         "UPDATE users SET pass_hash = ? WHERE id = ?",
         (hash_password(payload.new_password), user["id"]),
+    )
+    # Все прочие сессии этого пользователя завершаем — если сессию угнали, смена
+    # пароля выкидывает злоумышленника. Текущую (с которой меняем) сохраняем.
+    current_token = request.cookies.get(SESSION_COOKIE)
+    await db.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND token <> ?",
+        (user["id"], current_token),
     )
     await db.commit()
     await write_audit(db, user_id=user["id"], action="password_changed", ip=client_ip(request))

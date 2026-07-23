@@ -360,6 +360,8 @@ async def _notes_update(db, user, args):
 async def _notes_delete(db, user, args):
     note_id = _req_int(args, "id")
     row = await _get_note(db, note_id, user["id"])
+    if row["owner_id"] != user["id"]:
+        raise ToolError("Удалить заметку может только её автор")
     await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
     await db.commit()
     return ({"id": note_id, "status": "deleted"},
@@ -446,6 +448,8 @@ async def _calendar_update(db, user, args):
 async def _calendar_delete(db, user, args):
     event_id = _req_int(args, "id")
     row = await _get_event(db, event_id, user["id"])
+    if row["owner_id"] != user["id"]:
+        raise ToolError("Удалить событие может только его автор")
     await db.execute("DELETE FROM events WHERE id = ?", (event_id,))
     await db.commit()
     return ({"id": event_id, "status": "deleted"},

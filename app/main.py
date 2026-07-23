@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import BASE_DIR
+from app.config import BASE_DIR, settings
 from app.db import init_db
 from app.routers import admin as admin_router
 from app.routers import attachments as attachments_router
@@ -21,6 +21,11 @@ from app.routers import notes as notes_router
 from app.routers import tools as tools_router
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# Предел размера тела запроса: с запасом на multipart-обёртку поверх лимита
+# загрузки файла. Огромные тела отсекаем ДО парсинга/сохранения во временный
+# файл — защита от исчерпания памяти и диска при загрузке (§ безопасность).
+MAX_BODY_BYTES = (settings.max_upload_mb + 2) * 1024 * 1024
 
 
 @asynccontextmanager
@@ -41,6 +46,16 @@ app = FastAPI(title="srv-ai webUI", lifespan=lifespan)
 @app.middleware("http")
 async def security_headers_and_csrf(request: Request, call_next):
     if request.method in MUTATING_METHODS:
+        # Отсекаем слишком большое тело до парсинга (OOM/переполнение диска)
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                oversized = int(content_length) > MAX_BODY_BYTES
+            except ValueError:
+                return JSONResponse({"detail": "Некорректный Content-Length"}, status_code=400)
+            if oversized:
+                return JSONResponse({"detail": "Тело запроса слишком большое"}, status_code=413)
+
         origin = request.headers.get("origin")
         host = request.headers.get("host", "")
         if origin is not None and origin.split("://", 1)[-1] != host:

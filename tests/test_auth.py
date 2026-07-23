@@ -100,3 +100,29 @@ def test_csrf_origin_rejected(client, make_user):
                     json={"login": "csrf-user", "password": PASSWORD},
                     headers={"origin": "http://evil.example"})
     assert r.status_code == 403
+
+
+def test_oversized_body_rejected(client, monkeypatch):
+    # тело больше лимита отклоняется до парсинга (защита от OOM/переполнения диска)
+    import app.main as main
+    monkeypatch.setattr(main, "MAX_BODY_BYTES", 50)
+    r = client.post("/api/login", json={"login": "x" * 100, "password": "y" * 100})
+    assert r.status_code == 413
+
+
+def test_password_change_invalidates_other_sessions(client, make_user):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    make_user("multi", PASSWORD)
+    login_as(client, "multi", PASSWORD)                       # сессия A (текущая)
+    with TestClient(app) as other:
+        login_as(other, "multi", PASSWORD)                   # сессия B (др. устройство)
+        assert other.get("/api/me").status_code == 200
+
+        r = client.post("/api/me/password",
+                        json={"current_password": PASSWORD, "new_password": "brand-new-pass-1"})
+        assert r.status_code == 200
+
+        assert client.get("/api/me").status_code == 200      # A — жива
+        assert other.get("/api/me").status_code == 401       # B — выкинута

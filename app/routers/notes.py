@@ -165,6 +165,9 @@ async def delete_note(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
     row = await _get_visible_note(db, note_id, user["id"])
+    # Удалить может только автор (общую заметку видят все, но чужую не удаляют)
+    if row["owner_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Удалить заметку может только её автор")
     await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
     await db.commit()
     await write_audit(db, user_id=user["id"], action="note_deleted",

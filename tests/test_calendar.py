@@ -39,6 +39,22 @@ def _event(title: str, start: str, end: str, **extra) -> dict:
     return {"title": title, "starts_at": start, "ends_at": end, **extra}
 
 
+def test_shared_event_delete_only_by_author(client, make_user, two_users):
+    c = two_users("carol")
+    event_id = c.post("/api/events", json=_event(
+        "Общее совещание", "2026-07-17T10:00:00+03:00", "2026-07-17T11:00:00+03:00",
+        scope="shared")).json()["id"]
+
+    # Дэйв видит общее событие, но удалить чужое — нельзя
+    c = two_users("dave")
+    assert c.delete(f"/api/events/{event_id}").status_code == 403
+    assert c.get(f"/api/events/{event_id}").status_code == 200  # на месте
+
+    # автор — удаляет
+    c = two_users("carol")
+    assert c.delete(f"/api/events/{event_id}").status_code == 200
+
+
 def test_event_crud_roundtrip(client, make_user, two_users):
     c = two_users("carol")
     r = c.post("/api/events", json=_event(
