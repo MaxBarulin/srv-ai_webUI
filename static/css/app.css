@@ -619,6 +619,8 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .tool-chip.error { border-left-color: var(--osk-red); color: var(--osk-red-dark); }
 .tool-chip.confirm { border-left-color: var(--osk-red); }
+.tool-chip.done { border-left-color: #2e7d32; color: #2e7d32; }
+:root[data-theme="dark"] .tool-chip.done { border-left-color: #66bb6a; color: #81c784; }
 .tool-chip .tool-confirm-btn { flex-shrink: 0; }
 
 /* Очередь к модели (§15) */

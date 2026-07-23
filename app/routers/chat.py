@@ -24,6 +24,7 @@ from app.tools import (
     MAX_TOOL_ITERATIONS,
     TOOLS_SPEC,
     ToolError,
+    apply_resolved,
     execute_tool,
     is_destructive,
     parse_fallback_tool_calls,
@@ -287,6 +288,10 @@ async def _save_assistant_message(
     tool_activity: list[dict] | None = None, stats: dict | None = None,
 ) -> int:
     """Persist the assistant reply on its own connection (survives client disconnect)."""
+    # Если действие подтвердили раньше, чем сохранился ответ — записываем исход,
+    # а не «висящее» подтверждение (иначе в истории окажется мёртвая кнопка).
+    if tool_activity:
+        tool_activity = apply_resolved(tool_activity)
     async with get_connection() as db:
         now = utcnow_iso()
         cursor = await db.execute(

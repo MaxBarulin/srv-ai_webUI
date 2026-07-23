@@ -177,13 +177,13 @@ export function initChat(toast) {
     if (!btn) return;
     btn.disabled = true;
     const chip = btn.closest(".tool-chip");
+    if (!chip) return;
+    btn.textContent = "Выполняется…";
     try {
       const r = await api("/api/tools/confirm", { method: "POST", body: { token: btn.dataset.token } });
-      chip.classList.remove("confirm");
-      chip.textContent = `🔧 ${r.label}`;
+      setChipOutcome(chip, "done", r.label);
     } catch (err) {
-      chip.classList.add("error");
-      chip.textContent = `🔧 ${err.detail || "Не удалось выполнить действие"}`;
+      setChipOutcome(chip, "error", err.detail || "Не удалось выполнить действие");
     }
   });
 
@@ -511,10 +511,19 @@ function sourcesBlock(text) {
   return details;
 }
 
+// Плашка исхода деструктивного действия (после подтверждения) — заменяет кнопку
+function setChipOutcome(chip, status, label) {
+  chip.classList.remove("confirm");
+  chip.classList.toggle("error", status === "error");
+  chip.classList.toggle("done", status === "done");
+  chip.textContent = status === "done"
+    ? `✅ Выполнено: ${label}`
+    : `⚠️ Ошибка: ${label}`;
+}
+
 function toolChip({ label, status, token }) {
   const chip = document.createElement("div");
   chip.className = "tool-chip";
-  if (status === "error") chip.classList.add("error");
   if (status === "confirm" && token) {
     chip.classList.add("confirm");
     chip.textContent = `🔧 Модель запрашивает: ${label} `;
@@ -525,8 +534,14 @@ function toolChip({ label, status, token }) {
     btn.textContent = "Подтвердить";
     chip.appendChild(btn);
   } else if (status === "confirm") {
-    // из истории: токен не сохраняется, подтверждение доступно только в живом стриме
+    // из истории без токена (напр. после перезапуска сервера): кнопки нет
     chip.textContent = `🔧 Запрошено подтверждение: ${label}`;
+  } else if (status === "done") {
+    chip.classList.add("done");
+    chip.textContent = `✅ Выполнено: ${label}`;
+  } else if (status === "error") {
+    chip.classList.add("error");
+    chip.textContent = `⚠️ Ошибка: ${label}`;
   } else {
     chip.textContent = `🔧 ${label}`;
   }

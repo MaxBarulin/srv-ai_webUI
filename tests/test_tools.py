@@ -198,6 +198,49 @@ def test_confirm_token_persisted_in_history(client, tool_user):
         conn.close()
 
 
+def test_confirm_outcome_persisted_as_done(client, tool_user):
+    """После подтверждения запись в истории становится 'done' без токена —
+    вместо кнопки показывается плашка исхода (кнопка не воскресает при reload)."""
+    _insert_note(tool_user, note_id=1)
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_DELETE_NOTE удали заметку")
+    token = _events_of(events, "tool_confirm")[0]["token"]
+
+    r = client.post("/api/tools/confirm", json={"token": token})
+    assert r.status_code == 200
+    assert r.json()["status"] == "done"
+
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    activity = [m for m in messages if m["role"] == "assistant"][-1]["tool_activity"][0]
+    assert activity["status"] == "done"
+    assert "token" not in activity
+    assert "заметк" in activity["label"].lower()
+
+
+def test_confirm_error_outcome_persisted(client, make_user, tool_user):
+    """Неуспешное подтверждение (чужую общую заметку удалить нельзя) фиксируется
+    в истории как 'error' без токена."""
+    other = make_user("other-owner", PASS)
+    _insert_note(other, note_id=1, title="Чужая общая", scope="shared")
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_DELETE_NOTE удали заметку")
+    token = _events_of(events, "tool_confirm")[0]["token"]
+
+    r = client.post("/api/tools/confirm", json={"token": token})
+    assert r.status_code == 400  # только автор может удалить
+
+    conn = _connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1  # на месте
+    finally:
+        conn.close()
+
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    activity = [m for m in messages if m["role"] == "assistant"][-1]["tool_activity"][0]
+    assert activity["status"] == "error"
+    assert "token" not in activity
+
+
 def test_note_rewrite_is_destructive_but_rename_is_not(client, tool_user):
     _insert_note(tool_user, note_id=1)
     chat_id = _new_chat(client)

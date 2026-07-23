@@ -157,6 +157,35 @@ def pop_pending(token: str, user_id: int) -> dict | None:
     return pending
 
 
+# Исходы подтверждённых действий: token -> {"status": "done"/"error", "label", "ts"}.
+# Нужны, чтобы закрыть гонку «пользователь подтвердил раньше, чем ответ модели
+# сохранён в БД»: при сохранении активности вместо «висящего» подтверждения
+# подставляется уже известный исход (иначе в историю попадёт мёртвая кнопка).
+_RESOLVED: dict[str, dict] = {}
+RESOLVED_TTL = 3600
+
+
+def mark_resolved(token: str, status: str, label: str) -> None:
+    now = time.monotonic()
+    for t in [t for t, r in _RESOLVED.items() if r["ts"] < now - RESOLVED_TTL]:
+        del _RESOLVED[t]
+    _RESOLVED[token] = {"status": status, "label": label, "ts": now}
+
+
+def apply_resolved(activity: list[dict]) -> list[dict]:
+    """При сохранении активности заменить ещё не подтверждённые записи на их
+    исход, если пользователь успел подтвердить действие до записи сообщения."""
+    result: list[dict] = []
+    for a in activity:
+        token = a.get("token") if isinstance(a, dict) else None
+        resolved = _RESOLVED.get(token) if token else None
+        if resolved:
+            result.append({"label": resolved["label"], "status": resolved["status"]})
+        else:
+            result.append(a)
+    return result
+
+
 # --- Валидация аргументов ---
 
 def _req_int(args: dict, key: str) -> int:
