@@ -31,6 +31,9 @@ from app.main import app
 def client():
     auth_module.login_rate_limiter._hits.clear()
     with TestClient(app) as c:
+        # Браузер шлёт Origin на мутациях; middleware теперь его требует (CSRF).
+        # TestClient его не добавляет, поэтому задаём совпадающий с host по умолчанию.
+        c.headers["origin"] = "http://testserver"
         yield c
 
 

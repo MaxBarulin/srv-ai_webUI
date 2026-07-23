@@ -102,6 +102,25 @@ def test_csrf_origin_rejected(client, make_user):
     assert r.status_code == 403
 
 
+def test_csrf_missing_origin_rejected(make_user):
+    # Мутация вообще без заголовка Origin — тоже отклоняется (raw-клиент без дефолта)
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    make_user("no-origin-user", PASSWORD)
+    with TestClient(app) as raw:
+        r = raw.post("/api/login", json={"login": "no-origin-user", "password": PASSWORD})
+        assert r.status_code == 403
+
+
+def test_get_requests_need_no_origin(client, make_user):
+    # GET (немутация) работает без Origin — не ломаем чтение
+    make_user("reader", PASSWORD)
+    login_as(client, "reader", PASSWORD)
+    r = client.get("/api/me", headers={"origin": ""})
+    assert r.status_code == 200
+
+
 def test_oversized_body_rejected(client, monkeypatch):
     # тело больше лимита отклоняется до парсинга (защита от OOM/переполнения диска)
     import app.main as main
@@ -117,6 +136,7 @@ def test_password_change_invalidates_other_sessions(client, make_user):
     make_user("multi", PASSWORD)
     login_as(client, "multi", PASSWORD)                       # сессия A (текущая)
     with TestClient(app) as other:
+        other.headers["origin"] = "http://testserver"        # мутации требуют Origin
         login_as(other, "multi", PASSWORD)                   # сессия B (др. устройство)
         assert other.get("/api/me").status_code == 200
 

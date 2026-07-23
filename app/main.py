@@ -56,9 +56,12 @@ async def security_headers_and_csrf(request: Request, call_next):
             if oversized:
                 return JSONResponse({"detail": "Тело запроса слишком большое"}, status_code=413)
 
+        # CSRF: на мутациях Origin обязателен и должен совпадать с хостом.
+        # SameSite=Lax уже отсекает межсайтовые запросы; это — второй рубеж
+        # (в т.ч. на случай запросов вовсе без Origin).
         origin = request.headers.get("origin")
         host = request.headers.get("host", "")
-        if origin is not None and origin.split("://", 1)[-1] != host:
+        if origin is None or origin.split("://", 1)[-1] != host:
             return JSONResponse({"detail": "Invalid Origin"}, status_code=403)
 
     response = await call_next(request)
