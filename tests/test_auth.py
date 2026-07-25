@@ -129,6 +129,38 @@ def test_oversized_body_rejected(client, monkeypatch):
     assert r.status_code == 413
 
 
+def test_upload_limit_is_stricter_than_body_limit():
+    """Регресс: лимит тела для обычных запросов должен быть заметно выше лимита
+    загрузки — иначе сообщение с PDF в режиме «как картинку» (каждая страница
+    отдельной base64-картинкой, документ на 50+ листов = десятки МБ) отклонялось
+    бы с 413 уже ПОСЛЕ успешного прикрепления файла."""
+    from app.main import MAX_BODY_BYTES, MAX_UPLOAD_BYTES
+
+    assert MAX_BODY_BYTES > MAX_UPLOAD_BYTES
+    assert MAX_BODY_BYTES >= 48 * 1024 * 1024
+
+
+def test_chat_accepts_body_over_upload_limit(client, make_user, monkeypatch):
+    """Сообщение крупнее лимита ЗАГРУЗКИ проходит (vision-PDF), а сама загрузка
+    файла такого размера — по-прежнему отклоняется."""
+    import app.main as main
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 1024)      # 1 КБ на загрузку
+    monkeypatch.setattr(main, "MAX_BODY_BYTES", 5 * 1024 * 1024)
+
+    make_user("bigsender", PASSWORD)
+    login_as(client, "bigsender", PASSWORD)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+
+    payload = {"content": "x" * 200_000, "use_tools": False}   # ~200 КБ > лимита загрузки
+    r = client.post(f"/api/chats/{chat_id}/messages", json=payload)
+    assert r.status_code != 413
+
+    # но загрузка файла такого размера отсекается
+    r2 = client.post("/api/attachments",
+                     files={"file": ("big.txt", b"y" * 200_000, "text/plain")})
+    assert r2.status_code == 413
+
+
 def test_password_change_invalidates_other_sessions(client, make_user):
     from fastapi.testclient import TestClient
     from app.main import app

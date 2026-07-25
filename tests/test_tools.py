@@ -217,6 +217,26 @@ def test_confirm_outcome_persisted_as_done(client, tool_user):
     assert "заметк" in activity["label"].lower()
 
 
+def test_expired_token_outcome_persisted(client, tool_user):
+    """Протухший/потерянный при перезапуске токен тоже фиксируется в истории —
+    иначе кнопка «Подтвердить» воскресала бы при каждом перечитывании."""
+    import app.tools as tools_module
+
+    _insert_note(tool_user, note_id=1)
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_DELETE_NOTE удали заметку")
+    token = _events_of(events, "tool_confirm")[0]["token"]
+
+    tools_module._PENDING.clear()   # как после перезапуска сервера
+    assert client.post("/api/tools/confirm", json={"token": token}).status_code == 404
+
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    activity = [m for m in messages if m["role"] == "assistant"][-1]["tool_activity"][0]
+    assert activity["status"] == "error"
+    assert "token" not in activity          # кнопка больше не воскресает
+    assert "истёк" in activity["label"]
+
+
 def test_confirm_error_outcome_persisted(client, make_user, tool_user):
     """Неуспешное подтверждение (чужую общую заметку удалить нельзя) фиксируется
     в истории как 'error' без токена."""

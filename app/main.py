@@ -22,10 +22,15 @@ from app.routers import tools as tools_router
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# Предел размера тела запроса: с запасом на multipart-обёртку поверх лимита
-# загрузки файла. Огромные тела отсекаем ДО парсинга/сохранения во временный
-# файл — защита от исчерпания памяти и диска при загрузке (§ безопасность).
-MAX_BODY_BYTES = (settings.max_upload_mb + 2) * 1024 * 1024
+# Пределы размера тела запроса (отсекаем ДО парсинга — защита от исчерпания
+# памяти и диска):
+#   • загрузка файла — строго по MAX_UPLOAD_MB (+запас на multipart-обёртку);
+#   • остальные запросы — MAX_BODY_MB: сюда попадает отправка сообщения с PDF
+#     в режиме «как картинку», где КАЖДАЯ страница уходит отдельной base64-
+#     картинкой (документ на 50+ листов — это десятки МБ, и это штатный режим).
+MAX_UPLOAD_BYTES = (settings.max_upload_mb + 2) * 1024 * 1024
+MAX_BODY_BYTES = max(settings.max_body_mb * 1024 * 1024, MAX_UPLOAD_BYTES)
+UPLOAD_PATH_PREFIX = "/api/attachments"
 
 
 @asynccontextmanager
@@ -49,8 +54,11 @@ async def security_headers_and_csrf(request: Request, call_next):
         # Отсекаем слишком большое тело до парсинга (OOM/переполнение диска)
         content_length = request.headers.get("content-length")
         if content_length is not None:
+            limit = (MAX_UPLOAD_BYTES
+                     if request.url.path.startswith(UPLOAD_PATH_PREFIX)
+                     else MAX_BODY_BYTES)
             try:
-                oversized = int(content_length) > MAX_BODY_BYTES
+                oversized = int(content_length) > limit
             except ValueError:
                 return JSONResponse({"detail": "Некорректный Content-Length"}, status_code=400)
             if oversized:

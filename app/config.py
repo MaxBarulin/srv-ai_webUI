@@ -59,6 +59,7 @@ class Settings:
     tools_confirm_destructive: bool
     system_prompt_file: str
     max_upload_mb: int
+    max_body_mb: int
     vision_max_pages: int
     pii_filter: bool
     pii_whitelist_file: str
@@ -90,6 +91,7 @@ def load_settings() -> Settings:
         tools_confirm_destructive=_get_bool("TOOLS_CONFIRM_DESTRUCTIVE", True),
         system_prompt_file=_get("SYSTEM_PROMPT_FILE", "./system_prompt.txt"),
         max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),
+        max_body_mb=_get_int("MAX_BODY_MB", 64),
         vision_max_pages=_get_int("VISION_MAX_PAGES", 0),  # 0 — все страницы
         pii_filter=_get_bool("PII_FILTER", False),
         pii_whitelist_file=_get("PII_WHITELIST_FILE", ""),

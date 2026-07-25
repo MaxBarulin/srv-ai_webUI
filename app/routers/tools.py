@@ -63,6 +63,12 @@ async def confirm_action(
 ) -> dict:
     pending = pop_pending(payload.token, user["id"])
     if pending is None:
+        # Токен протух (TTL) или потерян при перезапуске сервера. Фиксируем исход
+        # в истории, иначе кнопка «Подтвердить» воскресала бы при каждом
+        # перечитывании и всегда падала бы с этой же ошибкой.
+        # Затрагиваются только сообщения самого пользователя (скоуп по user_id).
+        await _record_outcome(db, user["id"], payload.token, "error",
+                              "срок подтверждения истёк, повторите запрос")
         raise HTTPException(status_code=404, detail="Действие не найдено или срок истёк")
     try:
         _, label = await execute_tool(user, pending["name"], pending["args"], client_ip(request))
