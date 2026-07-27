@@ -124,6 +124,7 @@ export function initChat(toast) {
       sendMessage();
     }
   });
+  els.input.addEventListener("paste", onInputPaste);
   els.stopBtn.addEventListener("click", () => streams.get(activeChatId)?.ac.abort());
 
   // Тумблеры «Заметки/Календарь» и «Размышления» — свои у каждого чата
@@ -300,17 +301,16 @@ async function useExample(text) {
 
 // --- Вложения (§16) ---
 
-async function onFileSelected() {
-  const file = els.fileInput.files[0];
-  els.fileInput.value = ""; // разрешить повторный выбор того же файла
+async function uploadAttachment(file) {
   if (!file) return;
   els.attachBtn.disabled = true;
+  const label = els.attachBtn.textContent;
   els.attachBtn.textContent = "Загрузка…";
   try {
     const form = new FormData();
     form.append("file", file);
     // Для PDF — режим парсинга из тумблера чата: картинка (vision) или текст
-    if (/\.pdf$/i.test(file.name)) {
+    if (/\.pdf$/i.test(file.name || "")) {
       form.append("pdf_mode", els.ctxPdf.checked ? "vision" : "text");
     }
     const r = await fetch("/api/attachments", { method: "POST", body: form });
@@ -324,8 +324,38 @@ async function onFileSelected() {
     els.toast(e.message || "Не удалось обработать файл", true);
   } finally {
     els.attachBtn.disabled = false;
-    els.attachBtn.textContent = "📎 Файл";
+    els.attachBtn.textContent = label;
   }
+}
+
+async function onFileSelected() {
+  const file = els.fileInput.files[0];
+  els.fileInput.value = ""; // разрешить повторный выбор того же файла
+  await uploadAttachment(file);
+}
+
+// Вставка картинки из буфера прямо в поле ввода: скриншот (Shift+Win+S),
+// скопированный диапазон Excel и т.п. приходят как image/* — грузим их как
+// вложение-картинку (тот же путь, что и файл: перекодировка Pillow, vision).
+// Если картинки в буфере нет — не мешаем обычной вставке текста.
+function onInputPaste(e) {
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  const blobs = [];
+  for (const item of items) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const blob = item.getAsFile();
+      if (blob) blobs.push(blob);
+    }
+  }
+  if (!blobs.length) return;          // текст/прочее — оставляем браузеру
+  e.preventDefault();
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  blobs.forEach((blob, i) => {
+    const named = blob.name && /\.[a-z0-9]+$/i.test(blob.name);
+    const ext = (blob.type.split("/")[1] || "png").split("+")[0].replace("jpeg", "jpg");
+    const name = named ? blob.name : `вставка-${stamp}${blobs.length > 1 ? "-" + (i + 1) : ""}.${ext}`;
+    uploadAttachment(new File([blob], name, { type: blob.type }));
+  });
 }
 
 function renderAttachments() {
