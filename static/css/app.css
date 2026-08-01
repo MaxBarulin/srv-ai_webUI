@@ -148,6 +148,18 @@ h1, h2, h3, .display {
   border-color: var(--osk-red);
 }
 .btn-primary:hover { background: var(--osk-red-dark); border-color: var(--osk-red-dark); }
+/* В тёмной теме акцент светлее (--osk-red: #E23744), и белый текст на нём даёт
+   4.32:1 — ниже требования WCAG AA 4.5:1. Для заливки основной кнопки берём
+   более тёмный оттенок (#C62A38 → 5.54:1); сам акцент не трогаем, чтобы рамки
+   и подсветки на тёмном фоне не потускнели. */
+:root[data-theme="dark"] .btn-primary {
+  background: var(--osk-red-dark);
+  border-color: var(--osk-red-dark);
+}
+:root[data-theme="dark"] .btn-primary:hover {
+  background: var(--osk-red);
+  border-color: var(--osk-red);
+}
 .btn-small { padding: 5px 12px; font-size: 13px; font-weight: 400; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 
@@ -177,6 +189,25 @@ textarea {
    (растягивание за угол при этом работает). */
 textarea::-webkit-resizer { background: transparent; }
 input:focus, select:focus { outline: 2px solid var(--osk-red); outline-offset: -1px; border-color: var(--osk-red); }
+
+/* Видимый фокус для кнопок, ссылок и прочих интерактивных элементов.
+   :focus-visible, а не :focus — кольцо видит тот, кто идёт с клавиатуры,
+   у мыши его нет. Смещение наружу, чтобы кольцо не наезжало на подпись.
+   В режиме forced-colors отдаём системный индикатор. */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--osk-red);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+@media (forced-colors: active) {
+  button:focus-visible,
+  a:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible { outline-color: Highlight; }
+}
 
 /* --- Карточка со скошенным срезом --- */
 .card {
@@ -1392,6 +1423,19 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .btn-danger { color: var(--osk-red-dark); border-color: var(--osk-red); }
 .btn-danger:hover { background: var(--osk-red); color: #fff; }
 
+/* Видно только скринридеру: текст остаётся в дереве доступности,
+   но не занимает места на экране. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .toast {
   position: fixed;
   right: 24px; bottom: 24px;
@@ -1404,6 +1448,14 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   opacity: 0;
   transition: opacity 0.25s;
   pointer-events: none;
+}
+/* Ошибка висит до закрытия — её можно не успеть прочитать за 3,5 с,
+   поэтому делаем кликабельной (курсор и подсказка появляются только у неё). */
+.toast.error { cursor: pointer; pointer-events: auto; }
+.toast.error::after {
+  content: " ✕";
+  opacity: 0.75;
+  font-weight: 700;
 }
 .toast.visible { opacity: 1; }
 .toast.error { background: var(--osk-red-dark); }

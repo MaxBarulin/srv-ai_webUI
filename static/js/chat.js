@@ -59,7 +59,7 @@ const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-export function initChat(toast) {
+export function initChat(toast, announce) {
   els.list = $("chat-list");
   els.newBtn = $("chat-new-btn");
   els.messages = $("chat-messages");
@@ -85,6 +85,8 @@ export function initChat(toast) {
   els.promptSpec = $("prompt-spec");
   els.promptCustom = $("prompt-custom");
   els.toast = toast;
+  // Объявление смены состояния генерации для скринридера (тихо на экране)
+  els.announce = announce || (() => {});
 
   els.attachBtn.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", onFileSelected);
@@ -1107,7 +1109,13 @@ async function submitTurn(chatId, content, attachments) {
   updateInputState();
   renderChatList(); // показать индикатор генерации в списке
 
+  // Скринридеру: началась генерация. aria-busy помечает область как
+  // обновляющуюся, чтобы промежуточные куски текста не зачитывались.
+  els.announce("Генерация ответа");
+  els.messages.setAttribute("aria-busy", "true");
+
   let renamed = null;
+  let failed = false;
   try {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
@@ -1183,15 +1191,22 @@ async function submitTurn(chatId, content, attachments) {
       note.className = "msg-note";
       note.textContent = "Генерация остановлена пользователем";
       live.appendChild(note);
+      els.announce("Генерация остановлена");
     } else {
       const note = document.createElement("div");
       note.className = "msg-note msg-error";
       note.textContent = e.message || "Ошибка при обращении к модели";
       live.appendChild(note);
+      els.announce(e.message || "Ошибка при обращении к модели");
     }
+    failed = true;
   } finally {
     streams.delete(chatId);
     finishLive(st);
+    // Ответ пришёл целиком — сообщаем об этом (сам текст не зачитываем
+    // потоком, он доступен обычной навигацией по странице).
+    if (!failed) els.announce("Ответ готов");
+    els.messages.removeAttribute("aria-busy");
     const empty = !st.reasoningText && !st.contentText
       && !live.querySelector(".msg-note") && !live.querySelector(".tool-chip");
     if (empty) live.remove();
