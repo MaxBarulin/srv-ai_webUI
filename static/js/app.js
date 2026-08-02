@@ -93,6 +93,7 @@ function userRow(u) {
     login: u.login,
     name: u.display_name,
     role: null,
+    group: null,
     status: null,
     created: fmtMsk(u.created_at, false),
   };
@@ -104,6 +105,14 @@ function userRow(u) {
       badge.className = u.role === "admin" ? "badge admin" : "badge";
       badge.textContent = u.role === "admin" ? "администратор" : "пользователь";
       td.appendChild(badge);
+    } else if (key === "group") {
+      // Группу меняем прямо в строке — отдельная форма ради одного поля лишняя
+      const select = document.createElement("select");
+      select.className = "group-select";
+      select.title = "Группа определяет, какие общие заметки и события видит сотрудник";
+      select.replaceChildren(...groupOptions(u.group_id));
+      select.addEventListener("change", () => setUserGroup(u, select));
+      td.appendChild(select);
     } else if (key === "status") {
       const badge = document.createElement("span");
       badge.className = u.is_active ? "badge" : "badge blocked";
@@ -144,6 +153,8 @@ function userRow(u) {
 }
 
 async function loadUsers() {
+  // Группы грузим первыми: из них строится выпадающий список в строке сотрудника
+  await loadGroups();
   try {
     const users = await api("/api/admin/users");
     const tbody = document.getElementById("users-tbody");
@@ -155,6 +166,129 @@ async function loadUsers() {
   loadExamplesAdmin();
   loadMetrics();
   loadAudit();
+}
+
+// --- Администрирование: группы (отделы, бюро) ---
+
+let groups = [];
+
+// Пустое значение = «без группы»: такой сотрудник видит все общие записи.
+function groupOptions(selectedId, emptyLabel = "Без группы") {
+  const options = [{ id: "", name: emptyLabel }, ...groups];
+  return options.map((g) => {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    opt.selected = String(g.id) === String(selectedId ?? "");
+    return opt;
+  });
+}
+
+async function loadGroups() {
+  try {
+    groups = await api("/api/admin/groups");
+  } catch (e) {
+    groups = [];
+    toast(e.detail || "Не удалось загрузить группы", true);
+    return;
+  }
+  document.getElementById("groups-tbody").replaceChildren(...groups.map(groupRow));
+  const newGroup = document.getElementById("new-group");
+  newGroup.replaceChildren(
+    ...groupOptions(newGroup.value, "Без группы — видит все общие записи"));
+}
+
+function groupRow(g) {
+  const tr = document.createElement("tr");
+
+  const nameTd = document.createElement("td");
+  const name = document.createElement("input");
+  name.type = "text";
+  name.value = g.name;
+  name.maxLength = 80;
+  nameTd.appendChild(name);
+  tr.appendChild(nameTd);
+
+  for (const n of [g.user_count, g.note_count, g.event_count]) {
+    const td = document.createElement("td");
+    td.textContent = n;
+    tr.appendChild(td);
+  }
+
+  const actions = document.createElement("td");
+  actions.className = "actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-small";
+  saveBtn.textContent = "Переименовать";
+  saveBtn.addEventListener("click", () => renameGroup(g, name.value));
+  actions.appendChild(saveBtn);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "btn btn-small btn-danger ml-8";
+  delBtn.textContent = "Удалить";
+  delBtn.addEventListener("click", () => deleteGroup(g));
+  actions.appendChild(delBtn);
+  tr.appendChild(actions);
+  return tr;
+}
+
+async function createGroup() {
+  const input = document.getElementById("new-group-name");
+  const name = input.value.trim();
+  if (!name) { toast("Введите название группы", true); return; }
+  try {
+    await api("/api/admin/groups", { method: "POST", body: { name } });
+    input.value = "";
+    toast(`Группа «${name}» создана`);
+    loadUsers();
+  } catch (e) {
+    toast(e.detail || "Не удалось создать группу", true);
+  }
+}
+
+async function renameGroup(group, name) {
+  const trimmed = name.trim();
+  if (!trimmed) { toast("Название не может быть пустым", true); return; }
+  if (trimmed === group.name) return;
+  try {
+    await api(`/api/admin/groups/${group.id}`, { method: "PUT", body: { name: trimmed } });
+    toast(`Группа переименована в «${trimmed}»`);
+    loadUsers();
+  } catch (e) {
+    toast(e.detail || "Не удалось переименовать группу", true);
+    loadGroups();
+  }
+}
+
+async function deleteGroup(group) {
+  // Удаление группы расширяет видимость, а не сужает: проговариваем это числами
+  const consequences = [
+    group.user_count ? `${group.user_count} сотр. останутся без группы и увидят все общие записи` : "",
+    group.note_count ? `${group.note_count} заметок станут общими для всех` : "",
+    group.event_count ? `${group.event_count} событий станут общими для всех` : "",
+  ].filter(Boolean);
+  const tail = consequences.length ? `\n\n${consequences.join(";\n")}.` : "";
+  if (!confirm(`Удалить группу «${group.name}»?${tail}`)) return;
+  try {
+    await api(`/api/admin/groups/${group.id}`, { method: "DELETE" });
+    toast(`Группа «${group.name}» удалена`);
+    loadUsers();
+  } catch (e) {
+    toast(e.detail || "Не удалось удалить группу", true);
+  }
+}
+
+async function setUserGroup(user, select) {
+  const groupId = select.value ? Number(select.value) : null;
+  const label = select.options[select.selectedIndex].textContent;
+  try {
+    await api(`/api/admin/users/${user.id}/group`, { method: "POST", body: { group_id: groupId } });
+    toast(`«${user.login}» → ${groupId === null ? "без группы" : `группа «${label}»`}`);
+    loadUsers();
+  } catch (e) {
+    toast(e.detail || "Не удалось изменить группу", true);
+    select.value = String(user.group_id ?? "");  // откатываем поле к прежнему
+  }
 }
 
 // --- Администрирование: метрики (§13) ---
@@ -487,6 +621,7 @@ async function createUser(e) {
         display_name: document.getElementById("new-name").value.trim(),
         password: document.getElementById("new-password").value,
         role: document.getElementById("new-role").value,
+        group_id: Number(document.getElementById("new-group").value) || null,
       },
     });
     toast(`Пользователь «${login}» создан`);
@@ -536,6 +671,10 @@ async function init() {
 
   // Администрирование: примеры и выгрузка
   document.getElementById("create-user-form").addEventListener("submit", createUser);
+  document.getElementById("group-add-btn").addEventListener("click", createGroup);
+  document.getElementById("new-group-name").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); createGroup(); }
+  });
   document.getElementById("spec-add-btn").addEventListener("click", () =>
     saveSpec(null, { name: "Новая специализация", system_prompt: "", is_active: true, sort_order: 0 }));
   document.getElementById("examples-save-btn").addEventListener("click", saveExamples);
@@ -550,8 +689,8 @@ async function init() {
   });
   initChat(toast, announce);
   setRagAvailable(Boolean(currentUser.rag_enabled));
-  initNotes(toast);
-  initCalendar(toast);
+  initNotes(toast, currentUser);
+  initCalendar(toast, currentUser);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));
   showSection(currentSectionFromHash());
 }

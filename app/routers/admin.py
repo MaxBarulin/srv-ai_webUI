@@ -11,9 +11,16 @@ from pydantic import BaseModel
 from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, hash_password, require_admin, validate_password
 from app.db import get_db
+from app.groups import ensure_group_exists, ensure_name_free, normalize_group_name
 from app.metrics import metrics
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+SELECT_USER = """
+SELECT u.id, u.login, u.display_name, u.role, u.is_active, u.created_at,
+       u.group_id, g.name AS group_name
+FROM users u LEFT JOIN groups g ON g.id = u.group_id
+"""
 
 
 class CreateUserRequest(BaseModel):
@@ -21,21 +28,27 @@ class CreateUserRequest(BaseModel):
     password: str
     display_name: str = ""
     role: str = "user"
+    group_id: int | None = None
 
 
 class SetActiveRequest(BaseModel):
     is_active: bool
 
 
+class SetGroupRequest(BaseModel):
+    group_id: int | None = None  # None — без группы: видит все общие записи
+
+
 class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class GroupRequest(BaseModel):
+    name: str
+
+
 async def _get_user_or_404(db: aiosqlite.Connection, user_id: int) -> aiosqlite.Row:
-    cursor = await db.execute(
-        "SELECT id, login, display_name, role, is_active, created_at FROM users WHERE id = ?",
-        (user_id,),
-    )
+    cursor = await db.execute(SELECT_USER + "WHERE u.id = ?", (user_id,))
     row = await cursor.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -47,9 +60,7 @@ async def list_users(
     admin: dict = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
-    cursor = await db.execute(
-        "SELECT id, login, display_name, role, is_active, created_at FROM users ORDER BY login"
-    )
+    cursor = await db.execute(SELECT_USER + "ORDER BY u.login")
     return [dict(row) for row in await cursor.fetchall()]
 
 
@@ -70,12 +81,13 @@ async def create_user(
     cursor = await db.execute("SELECT id FROM users WHERE login = ?", (login,))
     if await cursor.fetchone() is not None:
         raise HTTPException(status_code=409, detail="Пользователь с таким логином уже существует")
+    await ensure_group_exists(db, payload.group_id)
 
     cursor = await db.execute(
-        "INSERT INTO users (login, pass_hash, display_name, role, is_active, created_at) "
-        "VALUES (?, ?, ?, ?, 1, ?)",
+        "INSERT INTO users (login, pass_hash, display_name, role, is_active, group_id, created_at) "
+        "VALUES (?, ?, ?, ?, 1, ?, ?)",
         (login, hash_password(payload.password), payload.display_name.strip() or login,
-         payload.role, utcnow_iso()),
+         payload.role, payload.group_id, utcnow_iso()),
     )
     await db.commit()
     user_id = cursor.lastrowid
@@ -177,6 +189,114 @@ async def reset_user_password(
                       object_type="user", object_id=str(user_id),
                       details=f"login={row['login']}", ip=client_ip(request))
     return {"ok": True}
+
+
+# ===== Группы пользователей (отделы, бюро) =====
+#
+# Группа определяет, кто видит общие заметки и события. Пользователь без
+# группы видит все общие записи; пользователь в группе — только общие своей
+# группы и адресованные всем. Подробности правила — в app/scoping.py.
+
+@router.get("/groups")
+async def list_groups(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[dict]:
+    # Счётчики нужны интерфейсу, чтобы предупредить о последствиях удаления
+    cursor = await db.execute(
+        "SELECT g.id, g.name, g.created_at, "
+        "  (SELECT COUNT(*) FROM users WHERE group_id = g.id) AS user_count, "
+        "  (SELECT COUNT(*) FROM notes WHERE group_id = g.id) AS note_count, "
+        "  (SELECT COUNT(*) FROM events WHERE group_id = g.id) AS event_count "
+        "FROM groups g ORDER BY g.name")
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+@router.post("/groups", status_code=201)
+async def create_group(
+    payload: GroupRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    name = normalize_group_name(payload.name)
+    await ensure_name_free(db, name)
+    cursor = await db.execute(
+        "INSERT INTO groups (name, created_at) VALUES (?, ?)", (name, utcnow_iso()))
+    await db.commit()
+    group_id = cursor.lastrowid
+    await write_audit(db, user_id=admin["id"], action="group_created",
+                      object_type="group", object_id=str(group_id),
+                      details=f"name={name}", ip=client_ip(request))
+    return {"id": group_id, "name": name}
+
+
+@router.put("/groups/{group_id}")
+async def rename_group(
+    group_id: int,
+    payload: GroupRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    name = normalize_group_name(payload.name)
+    await ensure_name_free(db, name, exclude_id=group_id)
+    cursor = await db.execute("UPDATE groups SET name = ? WHERE id = ?", (name, group_id))
+    await db.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    await write_audit(db, user_id=admin["id"], action="group_renamed",
+                      object_type="group", object_id=str(group_id),
+                      details=f"name={name}", ip=client_ip(request))
+    return {"ok": True, "id": group_id, "name": name}
+
+
+@router.delete("/groups/{group_id}")
+async def delete_group(
+    group_id: int,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    cursor = await db.execute("SELECT name FROM groups WHERE id = ?", (group_id,))
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+
+    # Удаление группы РАСШИРЯЕТ видимость, а не сужает: её участники остаются
+    # без группы и начинают видеть все общие записи, а адресованные ей заметки
+    # и события становятся общими для всех. Интерфейс предупреждает об этом
+    # заранее числами из list_groups.
+    await db.execute("UPDATE users SET group_id = NULL WHERE group_id = ?", (group_id,))
+    await db.execute("UPDATE notes SET group_id = NULL WHERE group_id = ?", (group_id,))
+    await db.execute("UPDATE events SET group_id = NULL WHERE group_id = ?", (group_id,))
+    await db.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+    await db.commit()
+    await write_audit(db, user_id=admin["id"], action="group_deleted",
+                      object_type="group", object_id=str(group_id),
+                      details=f"name={row['name']}", ip=client_ip(request))
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/group")
+async def set_user_group(
+    user_id: int,
+    payload: SetGroupRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    row = await _get_user_or_404(db, user_id)
+    await ensure_group_exists(db, payload.group_id)
+    await db.execute("UPDATE users SET group_id = ? WHERE id = ?", (payload.group_id, user_id))
+    await db.commit()
+    updated = await _get_user_or_404(db, user_id)
+    await write_audit(db, user_id=admin["id"], action="user_group_changed",
+                      object_type="user", object_id=str(user_id),
+                      details=f"login={row['login']}, group="
+                              f"{updated['group_name'] or 'без группы'}",
+                      ip=client_ip(request))
+    return dict(updated)
 
 
 # ===== Специализации (§15) =====

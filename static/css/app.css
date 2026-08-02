@@ -403,9 +403,20 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 }
 .badge.admin { border-color: var(--osk-red); color: var(--osk-red); }
 .badge.blocked { background: var(--osk-slate); border-color: var(--osk-slate); color: #fff; }
+/* Группа (отдел/бюро), которой адресована общая заметка или событие */
+.badge.group {
+  border-style: dashed;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .form-row { display: flex; gap: 16px; }
 .form-row > div { flex: 1; }
+/* Кнопка «Добавить группу» — на одной линии с полем ввода рядом */
+.group-add-cell { display: flex; align-items: flex-end; }
+table.users select.group-select { width: 100%; min-width: 140px; }
 
 .card-narrow { max-width: 720px; }
 .mt-32 { margin-top: 32px; }
@@ -664,6 +675,7 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 /* Бейджи в тёмном сайдбаре */
 .note-item .badge { border-color: rgba(255, 255, 255, 0.18); color: #9AA3AA; }
 .note-item .badge.shared { border-color: var(--osk-red); color: #E37D88; }
+.note-item .badge.group { border-color: rgba(255, 255, 255, 0.28); color: #B9C0C6; }
 #chat-spec { font-size: 13px; padding: 7px 10px; }
 #chat-spec[hidden] { display: none; }
 

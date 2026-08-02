@@ -122,6 +122,24 @@ CREATE TABLE IF NOT EXISTS chat_examples (
     text TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
+
+-- Группы пользователей: отдел, бюро, участок. Название задаёт администратор.
+-- Пользователь без группы (users.group_id IS NULL) видит все общие заметки
+-- и события; пользователь в группе — только общие своей группы и «общие для
+-- всех» (notes.group_id / events.group_id IS NULL).
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+"""
+
+# Индексы для колонок, добавляемых миграциями (в SCHEMA их создать нельзя —
+# на старой БД колонки ещё нет в момент выполнения скрипта).
+INDEXES_AFTER_MIGRATIONS = """
+CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);
+CREATE INDEX IF NOT EXISTS idx_notes_group ON notes(group_id);
+CREATE INDEX IF NOT EXISTS idx_events_group ON events(group_id);
 """
 
 # Миграции для существующих БД: добавление колонок (ALTER не поддерживает IF NOT EXISTS).
@@ -138,6 +156,13 @@ _COLUMN_MIGRATIONS = [
     ("chats", "pdf_mode", "TEXT NOT NULL DEFAULT 'vision'"),
     # Статистика генерации ответа (токены, скорость, контекст) — под ответом
     ("messages", "stats_json", "TEXT"),
+    # Группа (отдел/бюро) пользователя; NULL — без группы, видит все общие записи
+    ("users", "group_id", "INTEGER"),
+    # Группа, которой адресована общая заметка/событие; NULL — общая для всех.
+    # Проставляется сервером в момент записи по группе автора: у существующих
+    # записей останется NULL, то есть видимость не сузится задним числом.
+    ("notes", "group_id", "INTEGER"),
+    ("events", "group_id", "INTEGER"),
 ]
 
 DEFAULT_SPECIALIZATIONS = [
@@ -222,6 +247,7 @@ async def init_db() -> None:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         await _run_column_migrations(db)
+        await db.executescript(INDEXES_AFTER_MIGRATIONS)
         await _seed_defaults(db)
         await db.commit()
 

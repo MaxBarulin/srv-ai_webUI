@@ -6,13 +6,19 @@ let notes = [];
 let activeNoteId = null;
 let editingNoteId = null; // null — новая заметка
 let toast = () => {};
+// Пользователь без группы (обычно администратор) может адресовать общую
+// заметку конкретному отделу; состоящий в группе публикует только в свою.
+let me = null;
+let canTargetGroup = false;
 
 const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-export function initNotes(toastFn) {
+export function initNotes(toastFn, currentUser) {
   toast = toastFn;
+  me = currentUser;
+  canTargetGroup = currentUser.group_id === null || currentUser.group_id === undefined;
   Object.assign(els, {
     list: $("notes-list"),
     search: $("notes-search"),
@@ -32,6 +38,7 @@ export function initNotes(toastFn) {
     editTitle: $("note-edit-title"),
     editTags: $("note-edit-tags"),
     editScope: $("note-edit-scope"),
+    editGroup: $("note-edit-group"),
     editBody: $("note-edit-body"),
     preview: $("note-edit-preview"),
     tabEdit: $("note-tab-edit"),
@@ -58,12 +65,45 @@ export function initNotes(toastFn) {
   els.cancelBtn.addEventListener("click", closeEditor);
   els.editor.addEventListener("submit", saveNote);
 
+  els.editScope.addEventListener("change", syncGroupPicker);
+  if (canTargetGroup) loadGroupOptions();
+
   els.tabEdit.addEventListener("click", () => setPreview(false));
   els.tabPreview.addEventListener("click", () => setPreview(true));
 
   window.addEventListener("section-shown", (e) => {
     if (e.detail === "notes") refreshList();
   });
+}
+
+// --- Группа заметки ---
+
+function isOwn(noteId) {
+  const note = notes.find((n) => n.id === noteId);
+  return Boolean(note) && note.owner_id === me.id;
+}
+
+function scopeLabel(note) {
+  if (note.scope !== "shared") return "Личная заметка";
+  return note.group_name ? `Общая заметка · ${note.group_name}` : "Общая заметка (всем)";
+}
+
+// Выбор адресата виден только у общей заметки и только тому, кто сам без группы
+function syncGroupPicker() {
+  els.editGroup.hidden = !canTargetGroup || els.editScope.value !== "shared";
+}
+
+async function loadGroupOptions() {
+  let groups = [];
+  try {
+    groups = await api("/api/groups");
+  } catch { return; }  // без справочника остаётся вариант «Всем»
+  for (const g of groups) {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    els.editGroup.appendChild(opt);
+  }
 }
 
 // --- Список ---
@@ -98,6 +138,12 @@ function renderList() {
     scopeBadge.className = note.scope === "shared" ? "badge shared" : "badge";
     scopeBadge.textContent = note.scope === "shared" ? "общая" : "личная";
     meta.appendChild(scopeBadge);
+    if (note.scope === "shared" && note.group_name) {
+      const groupBadge = document.createElement("span");
+      groupBadge.className = "badge group";
+      groupBadge.textContent = note.group_name;
+      meta.appendChild(groupBadge);
+    }
     if (note.tags.length) {
       const tags = document.createElement("span");
       tags.className = "note-item-tags";
@@ -134,11 +180,8 @@ function renderMain() {
 
   els.viewTitle.textContent = note.title;
 
-  const parts = [
-    `${note.scope === "shared" ? "Общая" : "Личная"} заметка`,
-    `автор: ${note.author_name}`,
-    `создана: ${fmtDate(note.created_at)}`,
-  ];
+  const parts = [scopeLabel(note), `автор: ${note.author_name}`,
+                 `создана: ${fmtDate(note.created_at)}`];
   if (note.updated_at !== note.created_at && note.updated_by_name) {
     parts.push(`изменено: ${note.updated_by_name}, ${fmtDate(note.updated_at)}`);
   }
@@ -166,11 +209,8 @@ function exportActiveNotePdf() {
     area.id = "pdf-print";
     document.body.appendChild(area);
   }
-  const meta = [
-    `${note.scope === "shared" ? "Общая" : "Личная"} заметка`,
-    `автор: ${note.author_name}`,
-    `создана: ${fmtDate(note.created_at)}`,
-  ];
+  const meta = [scopeLabel(note), `автор: ${note.author_name}`,
+                `создана: ${fmtDate(note.created_at)}`];
   if (note.updated_at !== note.created_at && note.updated_by_name) {
     meta.push(`изменено: ${note.updated_by_name}, ${fmtDate(note.updated_at)}`);
   }
@@ -221,6 +261,8 @@ function openEditor(note) {
   els.editTitle.value = note ? note.title : "";
   els.editTags.value = note ? note.tags.join(", ") : "";
   els.editScope.value = note ? note.scope : "personal";
+  els.editGroup.value = note && note.group_id ? String(note.group_id) : "";
+  syncGroupPicker();
   els.editBody.value = note ? note.body : "";
   setPreview(false);
   els.editor.hidden = false;
@@ -252,6 +294,11 @@ async function saveNote(e) {
     tags: els.editTags.value.split(",").map((t) => t.trim()).filter(Boolean),
     scope: els.editScope.value,
   };
+  // group_id отправляем, только когда его действительно выбирали: сервер
+  // считает переданное поле явной сменой адресата и требует авторства.
+  if (canTargetGroup && (editingNoteId === null || isOwn(editingNoteId))) {
+    body.group_id = Number(els.editGroup.value) || null;
+  }
   if (!body.title) {
     toast("Заголовок не может быть пустым", true);
     return;

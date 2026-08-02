@@ -14,19 +14,23 @@ from pydantic import BaseModel, Field
 from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, get_current_user
 from app.db import get_db
+from app.groups import ensure_group_exists
+from app.scoping import target_group_id, update_group_id, visible_params, visible_sql
 
 router = APIRouter(prefix="/api/events", tags=["calendar"])
 
-VISIBLE = "(e.scope = 'shared' OR e.owner_id = ?)"
+VISIBLE = visible_sql("e")
 
 SELECT_EVENT = """
 SELECT e.id, e.owner_id, e.scope, e.title, e.description, e.location,
-       e.starts_at, e.ends_at, e.all_day, e.created_at, e.updated_at,
+       e.starts_at, e.ends_at, e.all_day, e.group_id, e.created_at, e.updated_at,
        a.display_name AS author_name,
-       u.display_name AS updated_by_name
+       u.display_name AS updated_by_name,
+       g.name AS group_name
 FROM events e
 JOIN users a ON a.id = e.owner_id
 LEFT JOIN users u ON u.id = e.updated_by
+LEFT JOIN groups g ON g.id = e.group_id
 """
 
 
@@ -38,6 +42,9 @@ class EventCreate(BaseModel):
     ends_at: str
     all_day: bool = False
     scope: str = Field("personal", pattern="^(personal|shared)$")
+    # Кому адресовано общее событие. Учитывается только у автора без группы;
+    # автор в группе всегда публикует в свою (см. app/scoping.py).
+    group_id: int | None = None
 
 
 class EventUpdate(BaseModel):
@@ -48,6 +55,7 @@ class EventUpdate(BaseModel):
     ends_at: str | None = None
     all_day: bool | None = None
     scope: str | None = Field(None, pattern="^(personal|shared)$")
+    group_id: int | None = None
 
 
 def _parse_iso(value: str, field: str) -> datetime:
@@ -66,10 +74,10 @@ def _validate_range(starts_at: str, ends_at: str) -> None:
         raise HTTPException(status_code=400, detail="Окончание раньше начала")
 
 
-async def _get_visible_event(db: aiosqlite.Connection, event_id: int, user_id: int) -> aiosqlite.Row:
+async def _get_visible_event(db: aiosqlite.Connection, event_id: int, user: dict) -> aiosqlite.Row:
     cursor = await db.execute(
         SELECT_EVENT + f"WHERE e.id = ? AND {VISIBLE}",
-        (event_id, user_id),
+        [event_id, *visible_params(user)],
     )
     row = await cursor.fetchone()
     if row is None:
@@ -86,7 +94,7 @@ async def list_events(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
     conditions = [VISIBLE]
-    params: list = [user["id"]]
+    params: list = visible_params(user)
 
     if scope != "all":
         conditions.append("e.scope = ?")
@@ -113,7 +121,7 @@ async def get_event(
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    return dict(await _get_visible_event(db, event_id, user["id"]))
+    return dict(await _get_visible_event(db, event_id, user))
 
 
 @router.post("", status_code=201)
@@ -126,16 +134,19 @@ async def create_event(
     if not title:
         raise HTTPException(status_code=400, detail="Название не может быть пустым")
     _validate_range(payload.starts_at, payload.ends_at)
+    group_id = await ensure_group_exists(
+        db, target_group_id(user, payload.scope, payload.group_id))
     now = utcnow_iso()
     cursor = await db.execute(
         "INSERT INTO events (owner_id, scope, title, description, location, "
-        "starts_at, ends_at, all_day, created_at, updated_at, updated_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "starts_at, ends_at, all_day, group_id, created_at, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (user["id"], payload.scope, title, payload.description, payload.location,
-         payload.starts_at, payload.ends_at, int(payload.all_day), now, now, user["id"]),
+         payload.starts_at, payload.ends_at, int(payload.all_day), group_id,
+         now, now, user["id"]),
     )
     await db.commit()
-    return dict(await _get_visible_event(db, cursor.lastrowid, user["id"]))
+    return dict(await _get_visible_event(db, cursor.lastrowid, user))
 
 
 @router.put("/{event_id}")
@@ -145,7 +156,7 @@ async def update_event(
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    row = await _get_visible_event(db, event_id, user["id"])
+    row = await _get_visible_event(db, event_id, user)
 
     if payload.scope is not None and payload.scope != row["scope"] and row["owner_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Менять область может только автор события")
@@ -158,9 +169,17 @@ async def update_event(
     ends_at = row["ends_at"] if payload.ends_at is None else payload.ends_at
     _validate_range(starts_at, ends_at)
 
+    scope = row["scope"] if payload.scope is None else payload.scope
+    explicit_group = "group_id" in payload.model_fields_set
+    if explicit_group and row["scope"] == "shared" and row["owner_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Менять группу может только автор события")
+    group_id = await ensure_group_exists(db, update_group_id(
+        user, row["scope"], row["group_id"], scope, payload.group_id, explicit_group))
+
     await db.execute(
         "UPDATE events SET title = ?, description = ?, location = ?, starts_at = ?, "
-        "ends_at = ?, all_day = ?, scope = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+        "ends_at = ?, all_day = ?, scope = ?, group_id = ?, updated_at = ?, "
+        "updated_by = ? WHERE id = ?",
         (
             title,
             row["description"] if payload.description is None else payload.description,
@@ -168,14 +187,15 @@ async def update_event(
             starts_at,
             ends_at,
             row["all_day"] if payload.all_day is None else int(payload.all_day),
-            row["scope"] if payload.scope is None else payload.scope,
+            scope,
+            group_id,
             utcnow_iso(),
             user["id"],
             event_id,
         ),
     )
     await db.commit()
-    return dict(await _get_visible_event(db, event_id, user["id"]))
+    return dict(await _get_visible_event(db, event_id, user))
 
 
 @router.delete("/{event_id}")
@@ -185,7 +205,7 @@ async def delete_event(
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    row = await _get_visible_event(db, event_id, user["id"])
+    row = await _get_visible_event(db, event_id, user)
     # Удалить может только автор (общее событие видят все, но чужое не удаляют)
     if row["owner_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Удалить событие может только его автор")

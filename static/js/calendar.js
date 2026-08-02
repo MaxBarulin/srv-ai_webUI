@@ -9,13 +9,19 @@ let events = [];
 let editingEventId = null;    // null — новое событие
 let editingEvent = null;
 let toast = () => {};
+// Пользователь без группы может адресовать общее событие конкретному отделу;
+// состоящий в группе публикует только в свою (см. app/scoping.py).
+let me = null;
+let canTargetGroup = false;
 
 const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-export function initCalendar(toastFn) {
+export function initCalendar(toastFn, currentUser) {
   toast = toastFn;
+  me = currentUser;
+  canTargetGroup = currentUser.group_id === null || currentUser.group_id === undefined;
   Object.assign(els, {
     title: $("cal-title"),
     prev: $("cal-prev"),
@@ -36,6 +42,8 @@ export function initCalendar(toastFn) {
     fDescription: $("event-description"),
     fLocation: $("event-location"),
     fScope: $("event-scope"),
+    fGroup: $("event-group"),
+    fGroupRow: $("event-group-row"),
     fAllDay: $("event-allday"),
     fStartDate: $("event-start-date"),
     fStartTime: $("event-start-time"),
@@ -57,6 +65,8 @@ export function initCalendar(toastFn) {
   els.deleteBtn.addEventListener("click", deleteEditingEvent);
   els.form.addEventListener("submit", saveEvent);
   els.fAllDay.addEventListener("change", syncAllDay);
+  els.fScope.addEventListener("change", syncGroupPicker);
+  if (canTargetGroup) loadGroupOptions();
   els.modal.addEventListener("click", (e) => { if (e.target === els.modal) closeModal(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !els.modal.hidden) closeModal();
@@ -272,6 +282,12 @@ function renderList() {
       badge.className = ev.scope === "shared" ? "badge shared" : "badge";
       badge.textContent = ev.scope === "shared" ? "общее" : "личное";
       row.appendChild(badge);
+      if (ev.scope === "shared" && ev.group_name) {
+        const groupBadge = document.createElement("span");
+        groupBadge.className = "badge group";
+        groupBadge.textContent = ev.group_name;
+        row.appendChild(groupBadge);
+      }
 
       block.appendChild(row);
     }
@@ -280,6 +296,24 @@ function renderList() {
 }
 
 // --- Модальное окно ---
+
+// Выбор адресата виден только у общего события и только тому, кто сам без группы
+function syncGroupPicker() {
+  els.fGroupRow.hidden = !canTargetGroup || els.fScope.value !== "shared";
+}
+
+async function loadGroupOptions() {
+  let groups = [];
+  try {
+    groups = await api("/api/groups");
+  } catch { return; }  // без справочника остаётся вариант «Всем»
+  for (const g of groups) {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    els.fGroup.appendChild(opt);
+  }
+}
 
 function syncAllDay() {
   const allDay = els.fAllDay.checked;
@@ -297,6 +331,8 @@ function openModal(ev, presetDay) {
   els.fDescription.value = ev ? ev.description : "";
   els.fLocation.value = ev ? ev.location : "";
   els.fScope.value = ev ? ev.scope : "personal";
+  els.fGroup.value = ev && ev.group_id ? String(ev.group_id) : "";
+  syncGroupPicker();
   els.fAllDay.checked = ev ? Boolean(ev.all_day) : false;
 
   if (ev) {
@@ -365,6 +401,11 @@ async function saveEvent(e) {
     all_day: els.fAllDay.checked,
     scope: els.fScope.value,
   };
+  // group_id отправляем, только когда его действительно выбирали: сервер
+  // считает переданное поле явной сменой адресата и требует авторства.
+  if (canTargetGroup && (editingEventId === null || (editingEvent && editingEvent.owner_id === me.id))) {
+    body.group_id = Number(els.fGroup.value) || null;
+  }
   if (!body.title) {
     toast("Название не может быть пустым", true);
     return;

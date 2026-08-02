@@ -151,6 +151,13 @@
                     <option value="personal" selected>Личная</option>
                     <option value="shared">Общая</option>
                   </select>
+                  <!-- Кому адресована общая заметка. Показывается только
+                       пользователю без группы: состоящий в группе публикует
+                       в свою и выбирать ему не из чего. -->
+                  <select id="note-edit-group" hidden
+                          title="Кто увидит эту общую заметку">
+                    <option value="">Всем</option>
+                  </select>
                 </div>
                 <div class="note-editor-tabs">
                   <button type="button" class="tab active" id="note-tab-edit">Текст</button>
@@ -221,6 +228,17 @@
                 </div>
               </div>
 
+              <!-- Кому адресовано общее событие; только для пользователя без группы -->
+              <div class="form-row" id="event-group-row" hidden>
+                <div>
+                  <label for="event-group">Кто увидит</label>
+                  <select id="event-group">
+                    <option value="">Всем</option>
+                  </select>
+                </div>
+                <div></div>
+              </div>
+
               <label class="event-allday"><input type="checkbox" id="event-allday"> Весь день</label>
 
               <div class="form-row">
@@ -256,7 +274,7 @@
           <table class="users">
             <thead>
               <tr>
-                <th>Логин</th><th>Имя</th><th>Роль</th><th>Статус</th><th>Создан</th><th></th>
+                <th>Логин</th><th>Имя</th><th>Роль</th><th>Группа</th><th>Статус</th><th>Создан</th><th></th>
               </tr>
             </thead>
             <tbody id="users-tbody"></tbody>
@@ -288,10 +306,43 @@
                   </select>
                 </div>
               </div>
+              <div class="form-row">
+                <div>
+                  <label for="new-group">Группа</label>
+                  <select id="new-group">
+                    <option value="" selected>Без группы — видит все общие записи</option>
+                  </select>
+                </div>
+                <div></div>
+              </div>
               <div class="mt-18">
                 <button type="submit" class="btn btn-primary">Создать</button>
               </div>
             </form>
+          </div>
+
+          <h3 class="section-title mt-32">Группы (отделы, бюро)</h3>
+          <div class="card">
+            <p class="hint">
+              Группа определяет, кто видит общие заметки и события. Пользователь
+              без группы видит все общие записи; пользователь в группе — только
+              общие своей группы и адресованные всем.
+            </p>
+            <table class="users">
+              <thead>
+                <tr><th>Название</th><th>Сотрудников</th><th>Заметок</th><th>Событий</th><th></th></tr>
+              </thead>
+              <tbody id="groups-tbody"></tbody>
+            </table>
+            <div class="form-row mt-18">
+              <div>
+                <label for="new-group-name">Название новой группы</label>
+                <input type="text" id="new-group-name" maxlength="80" placeholder="Отдел 17">
+              </div>
+              <div class="group-add-cell">
+                <button type="button" class="btn btn-primary" id="group-add-btn">Добавить группу</button>
+              </div>
+            </div>
           </div>
 
           <h3 class="section-title mt-32">Специализации (режимы чата)</h3>
@@ -332,6 +383,10 @@
               <option value="logout">Выход</option>
               <option value="user_created">Создание пользователя</option>
               <option value="user_blocked">Блокировка пользователя</option>
+              <option value="user_group_changed">Смена группы пользователя</option>
+              <option value="group_created">Создание группы</option>
+              <option value="group_renamed">Переименование группы</option>
+              <option value="group_deleted">Удаление группы</option>
               <option value="llm_tool_call">Вызов инструмента LLM</option>
               <option value="note_deleted">Удаление заметки</option>
               <option value="event_deleted">Удаление события</option>

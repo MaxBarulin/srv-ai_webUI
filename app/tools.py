@@ -21,6 +21,7 @@ from app.audit import utcnow_iso, write_audit
 from app.config import settings
 from app.db import get_connection
 from app.llm import APP_TZ, _WEEKDAYS_RU
+from app.scoping import target_group_id, update_group_id, visible_params, visible_sql
 
 MAX_TOOL_ITERATIONS = 6
 SEARCH_LIMIT = 20
@@ -236,22 +237,27 @@ def _tags_to_str(tags: list[str]) -> str:
 
 # --- Исполнение ---
 
-NOTE_VISIBLE = "(scope = 'shared' OR owner_id = ?)"
+# Видимость — общая с REST-роутерами (app/scoping.py): личное только автору,
+# общее — своей группе и «для всех». Модель группу не выбирает: она всегда
+# берётся из группы пользователя, от имени которого выполняется инструмент.
+NOTE_VISIBLE = visible_sql()
 EVENT_VISIBLE = NOTE_VISIBLE
 
 
-async def _get_note(db, note_id: int, user_id: int):
+async def _get_note(db, note_id: int, user: dict):
     cursor = await db.execute(
-        f"SELECT * FROM notes WHERE id = ? AND {NOTE_VISIBLE}", (note_id, user_id))
+        f"SELECT * FROM notes WHERE id = ? AND {NOTE_VISIBLE}",
+        [note_id, *visible_params(user)])
     row = await cursor.fetchone()
     if row is None:
         raise ToolError(f"Заметка id={note_id} не найдена или недоступна")
     return row
 
 
-async def _get_event(db, event_id: int, user_id: int):
+async def _get_event(db, event_id: int, user: dict):
     cursor = await db.execute(
-        f"SELECT * FROM events WHERE id = ? AND {EVENT_VISIBLE}", (event_id, user_id))
+        f"SELECT * FROM events WHERE id = ? AND {EVENT_VISIBLE}",
+        [event_id, *visible_params(user)])
     row = await cursor.fetchone()
     if row is None:
         raise ToolError(f"Событие id={event_id} не найдено или недоступно")
@@ -285,13 +291,13 @@ async def preview_destructive(user: dict, name: str, args: dict) -> str:
     """Проверить объект и вернуть описание действия для кнопки подтверждения."""
     async with get_connection() as db:
         if name == "notes_delete":
-            row = await _get_note(db, _req_int(args, "id"), user["id"])
+            row = await _get_note(db, _req_int(args, "id"), user)
             return f"удалить заметку «{row['title']}»"
         if name == "notes_update":
-            row = await _get_note(db, _req_int(args, "id"), user["id"])
+            row = await _get_note(db, _req_int(args, "id"), user)
             return f"перезаписать заметку «{row['title']}»"
         if name == "calendar_delete":
-            row = await _get_event(db, _req_int(args, "id"), user["id"])
+            row = await _get_event(db, _req_int(args, "id"), user)
             return f"удалить событие «{row['title']}»"
     raise ToolError(f"Неизвестное деструктивное действие: {name}")
 
@@ -314,7 +320,7 @@ async def execute_tool(user: dict, name: str, args: dict, ip: str | None) -> tup
 
 async def _notes_search(db, user, args):
     conditions = [NOTE_VISIBLE]
-    params: list = [user["id"]]
+    params: list = visible_params(user)
     scope = _scope(args, "all", allow_all=True)
     if scope != "all":
         conditions.append("scope = ?")
@@ -340,7 +346,7 @@ async def _notes_search(db, user, args):
 
 
 async def _notes_get(db, user, args):
-    row = await _get_note(db, _req_int(args, "id"), user["id"])
+    row = await _get_note(db, _req_int(args, "id"), user)
     result = _note_brief(row)
     result["text"] = row["body"]
     return result, f"прочитана заметка «{row['title']}»", "note", str(row["id"])
@@ -350,12 +356,14 @@ async def _notes_create(db, user, args):
     title = _str(args, "title").strip()
     if not title:
         raise ToolError("Заголовок не может быть пустым")
+    scope = _scope(args, "personal")
     now = utcnow_iso()
     cursor = await db.execute(
-        "INSERT INTO notes (owner_id, scope, title, body, tags, created_at, updated_at, updated_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (user["id"], _scope(args, "personal"), title, _str(args, "text"),
-         _tags_to_str(_tags(args) or []), now, now, user["id"]),
+        "INSERT INTO notes (owner_id, scope, title, body, tags, group_id, "
+        "created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (user["id"], scope, title, _str(args, "text"),
+         _tags_to_str(_tags(args) or []), target_group_id(user, scope, None),
+         now, now, user["id"]),
     )
     await db.commit()
     return ({"id": cursor.lastrowid, "title": title, "status": "created"},
@@ -364,7 +372,7 @@ async def _notes_create(db, user, args):
 
 async def _notes_update(db, user, args):
     note_id = _req_int(args, "id")
-    row = await _get_note(db, note_id, user["id"])
+    row = await _get_note(db, note_id, user)
     scope = args.get("scope")
     if scope is not None and scope != row["scope"] and row["owner_id"] != user["id"]:
         raise ToolError("Менять область может только автор заметки")
@@ -372,13 +380,15 @@ async def _notes_update(db, user, args):
     if not title:
         raise ToolError("Заголовок не может быть пустым")
     tags = _tags(args)
+    new_scope = row["scope"] if scope is None else _scope(args, row["scope"])
     await db.execute(
-        "UPDATE notes SET title = ?, body = ?, tags = ?, scope = ?, updated_at = ?, updated_by = ? "
-        "WHERE id = ?",
+        "UPDATE notes SET title = ?, body = ?, tags = ?, scope = ?, group_id = ?, "
+        "updated_at = ?, updated_by = ? WHERE id = ?",
         (title,
          row["body"] if "text" not in args else _str(args, "text"),
          row["tags"] if tags is None else _tags_to_str(tags),
-         row["scope"] if scope is None else _scope(args, row["scope"]),
+         new_scope,
+         update_group_id(user, row["scope"], row["group_id"], new_scope, None, False),
          utcnow_iso(), user["id"], note_id),
     )
     await db.commit()
@@ -388,7 +398,7 @@ async def _notes_update(db, user, args):
 
 async def _notes_delete(db, user, args):
     note_id = _req_int(args, "id")
-    row = await _get_note(db, note_id, user["id"])
+    row = await _get_note(db, note_id, user)
     if row["owner_id"] != user["id"]:
         raise ToolError("Удалить заметку может только её автор")
     await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
@@ -399,7 +409,7 @@ async def _notes_delete(db, user, args):
 
 async def _calendar_list(db, user, args):
     conditions = [EVENT_VISIBLE]
-    params: list = [user["id"]]
+    params: list = visible_params(user)
     scope = _scope(args, "all", allow_all=True)
     if scope != "all":
         conditions.append("scope = ?")
@@ -427,14 +437,15 @@ async def _calendar_create(db, user, args):
     ends_at = _check_iso(_str(args, "ends_at"), "ends_at")
     if datetime.fromisoformat(ends_at) < datetime.fromisoformat(starts_at):
         raise ToolError("Окончание раньше начала")
+    scope = _scope(args, "personal")
     now = utcnow_iso()
     cursor = await db.execute(
         "INSERT INTO events (owner_id, scope, title, description, location, "
-        "starts_at, ends_at, all_day, created_at, updated_at, updated_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (user["id"], _scope(args, "personal"), title, _str(args, "description"),
+        "starts_at, ends_at, all_day, group_id, created_at, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (user["id"], scope, title, _str(args, "description"),
          _str(args, "location"), starts_at, ends_at, int(bool(args.get("all_day"))),
-         now, now, user["id"]),
+         target_group_id(user, scope, None), now, now, user["id"]),
     )
     await db.commit()
     return ({"id": cursor.lastrowid, "title": title, "status": "created"},
@@ -444,7 +455,7 @@ async def _calendar_create(db, user, args):
 
 async def _calendar_update(db, user, args):
     event_id = _req_int(args, "id")
-    row = await _get_event(db, event_id, user["id"])
+    row = await _get_event(db, event_id, user)
     scope = args.get("scope")
     if scope is not None and scope != row["scope"] and row["owner_id"] != user["id"]:
         raise ToolError("Менять область может только автор события")
@@ -457,15 +468,18 @@ async def _calendar_update(db, user, args):
         else _check_iso(_str(args, "ends_at"), "ends_at")
     if datetime.fromisoformat(ends_at) < datetime.fromisoformat(starts_at):
         raise ToolError("Окончание раньше начала")
+    new_scope = row["scope"] if scope is None else _scope(args, row["scope"])
     await db.execute(
         "UPDATE events SET title = ?, description = ?, location = ?, starts_at = ?, "
-        "ends_at = ?, all_day = ?, scope = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+        "ends_at = ?, all_day = ?, scope = ?, group_id = ?, updated_at = ?, "
+        "updated_by = ? WHERE id = ?",
         (title,
          row["description"] if "description" not in args else _str(args, "description"),
          row["location"] if "location" not in args else _str(args, "location"),
          starts_at, ends_at,
          row["all_day"] if "all_day" not in args else int(bool(args["all_day"])),
-         row["scope"] if scope is None else _scope(args, row["scope"]),
+         new_scope,
+         update_group_id(user, row["scope"], row["group_id"], new_scope, None, False),
          utcnow_iso(), user["id"], event_id),
     )
     await db.commit()
@@ -476,7 +490,7 @@ async def _calendar_update(db, user, args):
 
 async def _calendar_delete(db, user, args):
     event_id = _req_int(args, "id")
-    row = await _get_event(db, event_id, user["id"])
+    row = await _get_event(db, event_id, user)
     if row["owner_id"] != user["id"]:
         raise ToolError("Удалить событие может только его автор")
     await db.execute("DELETE FROM events WHERE id = ?", (event_id,))
