@@ -405,14 +405,7 @@
     </div>
   </div>
 
-  <!-- Тост: role="status" — вежливое объявление для скринридера.
-       Ошибки не скрываются по таймеру, закрываются кликом или Escape. -->
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-  <!-- Состояние генерации для скринридера. Сам поток ответа не озвучиваем
-       (это была бы лавина из отдельных кусков текста) — объявляем только
-       смену состояния: начали, готово, ошибка. -->
-  <p class="sr-only" id="sr-status" role="status" aria-live="polite"></p>
+  <div class="toast" id="toast"></div>
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
