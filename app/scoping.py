@@ -15,13 +15,14 @@
 """
 from __future__ import annotations
 
-SHARED_TO_ALL = None  # group_id общей записи, видимой каждому
-
 
 def visible_sql(alias: str = "") -> str:
     """Условие WHERE для выборки видимых записей.
 
     Ожидает три плейсхолдера подряд — их даёт visible_params().
+
+    alias подставляется в SQL как есть, поэтому допустимы только литералы из
+    кода («n», «e»); пользовательские данные сюда попадать не должны.
     """
     p = f"{alias}." if alias else ""
     return (
@@ -31,7 +32,10 @@ def visible_sql(alias: str = "") -> str:
 
 
 def visible_params(user: dict) -> list:
-    group_id = user.get("group_id")
+    # Именно user["group_id"], а не .get(): отсутствие ключа означало бы
+    # «без группы», то есть доступ ко всем общим записям. Такая ошибка должна
+    # шуметь KeyError, а не тихо открывать чужие отделы.
+    group_id = user["group_id"]
     return [user["id"], group_id, group_id]
 
 
@@ -44,7 +48,7 @@ def target_group_id(user: dict, scope: str, requested: int | None) -> int | None
     """
     if scope != "shared":
         return None  # у личной записи группы нет
-    own = user.get("group_id")
+    own = user["group_id"]  # см. visible_params: молчаливый .get() опасен
     if own is not None:
         return own
     return requested

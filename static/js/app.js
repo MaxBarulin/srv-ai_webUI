@@ -110,7 +110,7 @@ function userRow(u) {
       const select = document.createElement("select");
       select.className = "group-select";
       select.title = "Группа определяет, какие общие заметки и события видит сотрудник";
-      select.replaceChildren(...groupOptions(u.group_id));
+      select.replaceChildren(...groupOptions(u.group_id, "Без группы", u.group_name));
       select.addEventListener("change", () => setUserGroup(u, select));
       td.appendChild(select);
     } else if (key === "status") {
@@ -173,8 +173,15 @@ async function loadUsers() {
 let groups = [];
 
 // Пустое значение = «без группы»: такой сотрудник видит все общие записи.
-function groupOptions(selectedId, emptyLabel = "Без группы") {
-  const options = [{ id: "", name: emptyLabel }, ...groups];
+// Если текущей группы нет в справочнике (список не загрузился), добавляем её
+// отдельным пунктом — иначе поле показало бы «Без группы» и админ решил бы,
+// что доступ уже открыт всем.
+function groupOptions(selectedId, emptyLabel = "Без группы", selectedName = "") {
+  const known = groups.some((g) => String(g.id) === String(selectedId ?? ""));
+  const missing = (!known && selectedId !== null && selectedId !== undefined && selectedId !== "")
+    ? [{ id: selectedId, name: selectedName || `Группа #${selectedId}` }]
+    : [];
+  const options = [{ id: "", name: emptyLabel }, ...groups, ...missing];
   return options.map((g) => {
     const opt = document.createElement("option");
     opt.value = String(g.id);
