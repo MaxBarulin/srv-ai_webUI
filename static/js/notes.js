@@ -6,10 +6,10 @@ let notes = [];
 let activeNoteId = null;
 let editingNoteId = null; // null — новая заметка
 let toast = () => {};
-// Пользователь без группы (обычно администратор) может адресовать общую
-// заметку конкретному отделу; состоящий в группе публикует только в свою.
+// Адресата общей заметки выбирают администратор и сотрудник без группы;
+// состоящий в группе публикует только в свою (см. app/scoping.py).
 let me = null;
-let canTargetGroup = false;
+let canChooseGroup = false;
 
 const els = {};
 
@@ -18,7 +18,8 @@ function $(id) { return document.getElementById(id); }
 export function initNotes(toastFn, currentUser) {
   toast = toastFn;
   me = currentUser;
-  canTargetGroup = currentUser.group_id === null || currentUser.group_id === undefined;
+  canChooseGroup = currentUser.role === "admin" ||
+    currentUser.group_id === null || currentUser.group_id === undefined;
   Object.assign(els, {
     list: $("notes-list"),
     search: $("notes-search"),
@@ -66,7 +67,7 @@ export function initNotes(toastFn, currentUser) {
   els.editor.addEventListener("submit", saveNote);
 
   els.editScope.addEventListener("change", syncGroupPicker);
-  if (canTargetGroup) loadGroupOptions();
+  if (canChooseGroup) loadGroupOptions();
 
   els.tabEdit.addEventListener("click", () => setPreview(false));
   els.tabPreview.addEventListener("click", () => setPreview(true));
@@ -88,9 +89,17 @@ function scopeLabel(note) {
   return note.group_name ? `Общая заметка · ${note.group_name}` : "Общая заметка (всем)";
 }
 
-// Выбор адресата виден только у общей заметки и только тому, кто сам без группы
+// Сменить адресата чужой заметки может только администратор — остальным поле
+// не показываем, иначе оно молча ничего не делало бы при сохранении.
+function mayTargetGroup(noteId) {
+  if (!canChooseGroup) return false;
+  return noteId === null || me.role === "admin" || isOwn(noteId);
+}
+
+// Выбор адресата виден только у общей заметки и только тому, кто вправе менять
 function syncGroupPicker() {
-  els.editGroup.hidden = !canTargetGroup || els.editScope.value !== "shared";
+  els.editGroup.hidden =
+    els.editScope.value !== "shared" || !mayTargetGroup(editingNoteId);
 }
 
 async function loadGroupOptions() {
@@ -294,9 +303,9 @@ async function saveNote(e) {
     tags: els.editTags.value.split(",").map((t) => t.trim()).filter(Boolean),
     scope: els.editScope.value,
   };
-  // group_id отправляем, только когда его действительно выбирали: сервер
-  // считает переданное поле явной сменой адресата и требует авторства.
-  if (canTargetGroup && (editingNoteId === null || isOwn(editingNoteId))) {
+  // group_id отправляем ровно тогда, когда поле было показано: сервер
+  // считает переданное поле явной сменой адресата и проверяет права.
+  if (mayTargetGroup(editingNoteId)) {
     body.group_id = Number(els.editGroup.value) || null;
   }
   if (!body.title) {

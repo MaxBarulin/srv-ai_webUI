@@ -12,7 +12,13 @@ from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, get_current_user
 from app.db import get_db
 from app.groups import ensure_group_exists
-from app.scoping import target_group_id, update_group_id, visible_params, visible_sql
+from app.scoping import (
+    may_retarget,
+    new_group_id,
+    update_group_id,
+    visible_params,
+    visible_sql,
+)
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -120,8 +126,8 @@ async def create_note(
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Заголовок не может быть пустым")
-    group_id = await ensure_group_exists(
-        db, target_group_id(user, payload.scope, payload.group_id))
+    group_id = await ensure_group_exists(db, new_group_id(
+        user, payload.scope, payload.group_id, "group_id" in payload.model_fields_set))
     now = utcnow_iso()
     cursor = await db.execute(
         "INSERT INTO notes (owner_id, scope, title, body, tags, group_id, "
@@ -152,8 +158,9 @@ async def update_note(
 
     scope = row["scope"] if payload.scope is None else payload.scope
     explicit_group = "group_id" in payload.model_fields_set
-    if explicit_group and row["scope"] == "shared" and row["owner_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="Менять группу может только автор заметки")
+    if explicit_group and row["scope"] == "shared" and not may_retarget(user, row["owner_id"]):
+        raise HTTPException(status_code=403,
+                            detail="Менять группу может автор заметки или администратор")
     group_id = await ensure_group_exists(db, update_group_id(
         user, row["scope"], row["group_id"], scope, payload.group_id, explicit_group))
 

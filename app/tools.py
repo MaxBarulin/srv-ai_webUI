@@ -21,7 +21,7 @@ from app.audit import utcnow_iso, write_audit
 from app.config import settings
 from app.db import get_connection
 from app.llm import APP_TZ, _WEEKDAYS_RU
-from app.scoping import target_group_id, update_group_id, visible_params, visible_sql
+from app.scoping import new_group_id, update_group_id, visible_params, visible_sql
 
 MAX_TOOL_ITERATIONS = 6
 SEARCH_LIMIT = 20
@@ -362,7 +362,7 @@ async def _notes_create(db, user, args):
         "INSERT INTO notes (owner_id, scope, title, body, tags, group_id, "
         "created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (user["id"], scope, title, _str(args, "text"),
-         _tags_to_str(_tags(args) or []), target_group_id(user, scope, None),
+         _tags_to_str(_tags(args) or []), new_group_id(user, scope, None, False),
          now, now, user["id"]),
     )
     await db.commit()
@@ -445,7 +445,7 @@ async def _calendar_create(db, user, args):
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (user["id"], scope, title, _str(args, "description"),
          _str(args, "location"), starts_at, ends_at, int(bool(args.get("all_day"))),
-         target_group_id(user, scope, None), now, now, user["id"]),
+         new_group_id(user, scope, None, False), now, now, user["id"]),
     )
     await db.commit()
     return ({"id": cursor.lastrowid, "title": title, "status": "created"},

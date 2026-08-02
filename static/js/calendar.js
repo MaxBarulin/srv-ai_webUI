@@ -9,10 +9,10 @@ let events = [];
 let editingEventId = null;    // null — новое событие
 let editingEvent = null;
 let toast = () => {};
-// Пользователь без группы может адресовать общее событие конкретному отделу;
+// Адресата общего события выбирают администратор и сотрудник без группы;
 // состоящий в группе публикует только в свою (см. app/scoping.py).
 let me = null;
-let canTargetGroup = false;
+let canChooseGroup = false;
 
 const els = {};
 
@@ -21,7 +21,8 @@ function $(id) { return document.getElementById(id); }
 export function initCalendar(toastFn, currentUser) {
   toast = toastFn;
   me = currentUser;
-  canTargetGroup = currentUser.group_id === null || currentUser.group_id === undefined;
+  canChooseGroup = currentUser.role === "admin" ||
+    currentUser.group_id === null || currentUser.group_id === undefined;
   Object.assign(els, {
     title: $("cal-title"),
     prev: $("cal-prev"),
@@ -66,7 +67,7 @@ export function initCalendar(toastFn, currentUser) {
   els.form.addEventListener("submit", saveEvent);
   els.fAllDay.addEventListener("change", syncAllDay);
   els.fScope.addEventListener("change", syncGroupPicker);
-  if (canTargetGroup) loadGroupOptions();
+  if (canChooseGroup) loadGroupOptions();
   els.modal.addEventListener("click", (e) => { if (e.target === els.modal) closeModal(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !els.modal.hidden) closeModal();
@@ -297,9 +298,17 @@ function renderList() {
 
 // --- Модальное окно ---
 
-// Выбор адресата виден только у общего события и только тому, кто сам без группы
+// Сменить адресата чужого события может только администратор — остальным поле
+// не показываем, иначе оно молча ничего не делало бы при сохранении.
+function mayTargetGroup() {
+  if (!canChooseGroup) return false;
+  return editingEventId === null || me.role === "admin" ||
+    (editingEvent && editingEvent.owner_id === me.id);
+}
+
+// Выбор адресата виден только у общего события и только тому, кто вправе менять
 function syncGroupPicker() {
-  els.fGroupRow.hidden = !canTargetGroup || els.fScope.value !== "shared";
+  els.fGroupRow.hidden = els.fScope.value !== "shared" || !mayTargetGroup();
 }
 
 async function loadGroupOptions() {
@@ -401,9 +410,9 @@ async function saveEvent(e) {
     all_day: els.fAllDay.checked,
     scope: els.fScope.value,
   };
-  // group_id отправляем, только когда его действительно выбирали: сервер
-  // считает переданное поле явной сменой адресата и требует авторства.
-  if (canTargetGroup && (editingEventId === null || (editingEvent && editingEvent.owner_id === me.id))) {
+  // group_id отправляем ровно тогда, когда поле было показано: сервер
+  // считает переданное поле явной сменой адресата и проверяет права.
+  if (mayTargetGroup()) {
     body.group_id = Number(els.fGroup.value) || null;
   }
   if (!body.title) {

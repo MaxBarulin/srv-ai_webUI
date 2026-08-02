@@ -39,19 +39,49 @@ def visible_params(user: dict) -> list:
     return [user["id"], group_id, group_id]
 
 
+def may_choose_group(user: dict) -> bool:
+    """Кто вправе сам выбрать адресата общей записи.
+
+    Администратор — потому что раскладывать общую базу по отделам может
+    только он; и любой сотрудник без группы, которому и так видно всё.
+    Остальные публикуют исключительно в свою группу.
+    """
+    return user["role"] == "admin" or user["group_id"] is None
+
+
+def may_retarget(user: dict, owner_id: int) -> bool:
+    """Кто вправе сменить адресата уже опубликованной общей записи.
+
+    Автор — своей; администратор — любой, включая заметки, созданные до
+    появления групп. Удалять чужое и переводить его в личные по-прежнему
+    может только автор — это правило не трогаем.
+    """
+    return user["id"] == owner_id or user["role"] == "admin"
+
+
 def target_group_id(user: dict, scope: str, requested: int | None) -> int | None:
     """Какой группе адресована записываемая заметка/событие.
 
-    Пользователь в группе публикует только в свою группу — переданный им
-    group_id игнорируется. Пользователь без группы (обычно администратор)
-    может адресовать запись конкретной группе или оставить общей для всех.
+    Сотрудник в группе публикует только в свою — переданный им group_id
+    игнорируется. Тот, кому выбор разрешён (см. may_choose_group), адресует
+    запись названной группе либо оставляет её общей для всех.
     """
     if scope != "shared":
         return None  # у личной записи группы нет
-    own = user["group_id"]  # см. visible_params: молчаливый .get() опасен
-    if own is not None:
-        return own
-    return requested
+    if may_choose_group(user):
+        return requested
+    return user["group_id"]  # см. visible_params: молчаливый .get() опасен
+
+
+def new_group_id(user: dict, scope: str, requested: int | None, explicit: bool) -> int | None:
+    """Группа создаваемой записи.
+
+    Поле group_id по умолчанию равно None, поэтому «не передал» и «передал
+    null — для всех» различаются только по explicit. Без явного выбора запись
+    уходит в группу автора: иначе администратор, состоящий в отделе, разослал
+    бы её всему заводу, сам того не заметив.
+    """
+    return target_group_id(user, scope, requested if explicit else user["group_id"])
 
 
 def update_group_id(
@@ -72,5 +102,5 @@ def update_group_id(
     if new_scope != "shared":
         return None
     if current_scope != "shared" or explicit:
-        return target_group_id(user, "shared", requested if explicit else None)
+        return new_group_id(user, "shared", requested, explicit)
     return current_group_id

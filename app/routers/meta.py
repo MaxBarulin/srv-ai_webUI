@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 
 from app.auth import get_current_user
 from app.db import get_db
+from app.scoping import may_choose_group
 
 router = APIRouter(prefix="/api", tags=["meta"])
 
@@ -32,12 +33,12 @@ async def list_groups(
 ) -> list[dict]:
     """Справочник групп для выбора адресата общей записи.
 
-    Нужен только пользователю без группы: он один может адресовать общую
-    заметку или событие конкретному отделу. Состоящий в группе публикует
-    только в свою, выбирать ему не из чего — отдаём пустой список, чтобы
-    названия подразделений не расходились по всем учётным записям.
+    Нужен тем, кто вправе этот адресат выбирать: администратору и сотруднику
+    без группы. Состоящий в группе публикует только в свою, выбирать ему не
+    из чего — отдаём пустой список, чтобы названия подразделений не
+    расходились по всем учётным записям.
     """
-    if user.get("group_id") is not None:
+    if not may_choose_group(user):
         return []
     cursor = await db.execute("SELECT id, name FROM groups ORDER BY name")
     return [dict(row) for row in await cursor.fetchall()]
