@@ -540,40 +540,6 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .msg-assistant .msg-body > :first-child { margin-top: 12px; }
 .msg-assistant .msg-body > :last-child { margin-bottom: 12px; }
 
-/* Ответ модели как печатная страница.
-   Ширина сообщения (800px) — это ширина листа A4: 210 мм при 96 dpi = 794 px.
-   Но на бумаге текст не идёт от кромки до кромки: при полях 25 мм текстовая
-   колонка равна 160 мм ≈ 605 px, и это же попадает в комфортные 60–75 знаков
-   в строке. Поэтому абзацы, списки, заголовки и цитаты получают поля листа,
-   а таблицы, код, формулы и картинки остаются во всю ширину — им нужна ширина.
-
-   clamp() делает поля адаптивными без media-запросов: на узком экране, когда
-   колонка и так уже 605 px, отступ становится нулевым и текст не сдавливается. */
-.msg-assistant .msg-body > p,
-.msg-assistant .msg-body > ul,
-.msg-assistant .msg-body > ol,
-.msg-assistant .msg-body > h3,
-.msg-assistant .msg-body > h4,
-.msg-assistant .msg-body > h5,
-.msg-assistant .msg-body > h6,
-.msg-assistant .msg-body > blockquote {
-  padding-inline: clamp(0px, calc((100% - 605px) / 2), 78px);
-}
-/* Списки: собственный отступ под маркеры прибавляется к полю листа */
-.msg-assistant .msg-body > ul,
-.msg-assistant .msg-body > ol {
-  padding-inline-start: calc(clamp(0px, calc((100% - 605px) / 2), 78px) + 24px);
-}
-/* Таблицы, код, формулы и картинки начинаются от той же левой границы, что и
-   текст (иначе получаются два разных левых края и вёрстка выглядит съехавшей),
-   но вправо могут уходить до самого края листа — широкой таблице нужна ширина. */
-.msg-assistant .msg-body > .table-wrap,
-.msg-assistant .msg-body > .code-block,
-.msg-assistant .msg-body > .katex-display,
-.msg-assistant .msg-body > img {
-  margin-inline-start: clamp(0px, calc((100% - 605px) / 2), 78px);
-}
-
 .msg-note { margin-top: 6px; font-size: 12px; color: var(--osk-slate); font-style: italic; }
 .msg-note.msg-error { color: var(--osk-red-dark); font-style: normal; }
 
