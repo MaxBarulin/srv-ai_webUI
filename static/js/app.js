@@ -26,12 +26,35 @@ function fmtMsk(iso, withTime = true) {
 const toastEl = document.getElementById("toast");
 let toastTimer = null;
 
+function hideToast() {
+  clearTimeout(toastTimer);
+  toastEl.classList.remove("visible");
+}
+
 function toast(message, isError = false) {
+  clearTimeout(toastTimer);
+  // Пересобираем текст, чтобы живая область (role="status") заметила изменение
+  // и повторное одинаковое сообщение тоже было объявлено.
+  toastEl.textContent = "";
   toastEl.textContent = message;
   toastEl.classList.toggle("error", isError);
   toastEl.classList.add("visible");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove("visible"), 3500);
+  // Обычное уведомление гаснет само; ошибку пользователь закрывает сам —
+  // за 3,5 секунды её можно не успеть прочитать.
+  if (!isError) toastTimer = setTimeout(hideToast, 3500);
+}
+
+toastEl.addEventListener("click", hideToast);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && toastEl.classList.contains("visible")) hideToast();
+});
+
+// Объявление состояния генерации для скринридера (см. #sr-status в разметке).
+const srStatusEl = document.getElementById("sr-status");
+function announce(message) {
+  if (!srStatusEl) return;
+  srStatusEl.textContent = "";
+  srStatusEl.textContent = message;
 }
 
 // --- Навигация ---
@@ -525,7 +548,7 @@ async function init() {
   document.getElementById("audit-next").addEventListener("click", () => {
     auditOffset += AUDIT_LIMIT; loadAudit();
   });
-  initChat(toast);
+  initChat(toast, announce);
   setRagAvailable(Boolean(currentUser.rag_enabled));
   initNotes(toast);
   initCalendar(toast);
