@@ -593,8 +593,9 @@ function calcTrace(steps) {
   return box;
 }
 
-// Разумная точность: целые без хвоста, дробные — до четырёх знаков
-function formatCalcValue(value) {
+// Разумная точность: целые без хвоста, дробные — до четырёх знаков.
+// Экспортируется, чтобы прогон методики в админке показывал числа так же.
+export function formatCalcValue(value) {
   if (typeof value !== "number" || !isFinite(value)) return String(value);
   if (Number.isInteger(value)) return String(value);
   const rounded = Math.round(value * 10000) / 10000;

@@ -16,6 +16,8 @@ from app.appsettings import (
 )
 from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, hash_password, require_admin, validate_password
+from app.calc import CalcError
+from app.calc_methods import method_dict, normalize_method, run_method
 from app.db import get_db
 from app.groups import ensure_group_exists, ensure_name_free, normalize_group_name
 from app.metrics import metrics
@@ -338,6 +340,133 @@ async def update_calc_settings(
                       object_type="setting", object_id=CALC_ACCESS,
                       details=f"access={payload.access}", ip=client_ip(request))
     return {"ok": True, "access": payload.access}
+
+
+# ===== Расчёты (§17): справочник методик =====
+#
+# Формулы проверяются здесь, при сохранении: опечатка администратора должна
+# всплыть сразу и с номером строки, а не при первом обращении модели.
+
+class MethodRequest(BaseModel):
+    name: str
+    description: str = ""
+    params_text: str = ""
+    steps_text: str = ""
+    is_active: bool = True
+    sort_order: int = 0
+
+
+SELECT_METHOD = ("SELECT id, name, description, params_json, steps_json, "
+                 "is_active, sort_order FROM calc_methods ")
+
+
+@router.get("/calc/methods")
+async def list_calc_methods(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[dict]:
+    cursor = await db.execute(SELECT_METHOD + "ORDER BY sort_order, id")
+    return [method_dict(row) for row in await cursor.fetchall()]
+
+
+async def _method_or_404(db: aiosqlite.Connection, method_id: int) -> aiosqlite.Row:
+    cursor = await db.execute(SELECT_METHOD + "WHERE id = ?", (method_id,))
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Методика не найдена")
+    return row
+
+
+def _normalized(payload: MethodRequest) -> dict:
+    try:
+        return normalize_method(payload.name, payload.description,
+                                payload.params_text, payload.steps_text)
+    except CalcError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/calc/methods", status_code=201)
+async def create_calc_method(
+    payload: MethodRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    data = _normalized(payload)
+    now = utcnow_iso()
+    cursor = await db.execute(
+        "INSERT INTO calc_methods (name, description, params_json, steps_json, "
+        "is_active, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (data["name"], data["description"],
+         json.dumps(data["params"], ensure_ascii=False),
+         json.dumps(data["steps"], ensure_ascii=False),
+         int(payload.is_active), payload.sort_order, now, now))
+    await db.commit()
+    method_id = cursor.lastrowid
+    await write_audit(db, user_id=admin["id"], action="calc_method_created",
+                      object_type="calc_method", object_id=str(method_id),
+                      details=f"name={data['name']}", ip=client_ip(request))
+    return method_dict(await _method_or_404(db, method_id))
+
+
+@router.put("/calc/methods/{method_id}")
+async def update_calc_method(
+    method_id: int,
+    payload: MethodRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    await _method_or_404(db, method_id)
+    data = _normalized(payload)
+    await db.execute(
+        "UPDATE calc_methods SET name = ?, description = ?, params_json = ?, "
+        "steps_json = ?, is_active = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+        (data["name"], data["description"],
+         json.dumps(data["params"], ensure_ascii=False),
+         json.dumps(data["steps"], ensure_ascii=False),
+         int(payload.is_active), payload.sort_order, utcnow_iso(), method_id))
+    await db.commit()
+    await write_audit(db, user_id=admin["id"], action="calc_method_updated",
+                      object_type="calc_method", object_id=str(method_id),
+                      details=f"name={data['name']}", ip=client_ip(request))
+    return method_dict(await _method_or_404(db, method_id))
+
+
+@router.delete("/calc/methods/{method_id}")
+async def delete_calc_method(
+    method_id: int,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    row = await _method_or_404(db, method_id)
+    await db.execute("DELETE FROM calc_methods WHERE id = ?", (method_id,))
+    await db.commit()
+    # Прежние ответы не пострадают: формулы сохранены в трассе сообщения
+    await write_audit(db, user_id=admin["id"], action="calc_method_deleted",
+                      object_type="calc_method", object_id=str(method_id),
+                      details=f"name={row['name']}", ip=client_ip(request))
+    return {"ok": True}
+
+
+class MethodTryRequest(BaseModel):
+    params: dict[str, float] = {}
+
+
+@router.post("/calc/methods/{method_id}/try")
+async def try_calc_method(
+    method_id: int,
+    payload: MethodTryRequest,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    """Прогнать методику на пробных числах — проверить её до выдачи людям."""
+    try:
+        out = await run_method(db, method_id, dict(payload.params))
+    except CalcError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"steps": out["trace"], "result": out["trace"][-1]["value"]}
 
 
 # ===== Специализации (§15) =====

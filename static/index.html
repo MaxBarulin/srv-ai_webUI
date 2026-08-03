@@ -442,6 +442,76 @@
               <button type="button" class="btn btn-primary" id="calc-access-save">Сохранить</button>
             </div>
           </div>
+
+          <h3 class="section-title mt-32">Справочник методик</h3>
+          <div class="card">
+            <p class="hint">
+              Готовые расчёты предприятия. Модель не сочиняет формулу, а
+              подставляет числа в вашу — выбор формулы перестаёт быть на её
+              совести. Список методик уходит модели вместе с запросом.
+            </p>
+            <table class="users">
+              <thead>
+                <tr><th>№</th><th>Название</th><th>Параметры</th><th>Шагов</th>
+                    <th>Активна</th><th></th></tr>
+              </thead>
+              <tbody id="methods-tbody"></tbody>
+            </table>
+            <div class="mt-18">
+              <button type="button" class="btn" id="method-add-btn">Добавить методику</button>
+            </div>
+          </div>
+
+          <div class="modal-backdrop" id="method-modal" hidden>
+            <div class="modal modal-wide">
+              <h3 class="modal-title" id="method-modal-title">Методика расчёта</h3>
+              <form id="method-form">
+                <div class="form-row">
+                  <div>
+                    <label for="method-name">Название</label>
+                    <input type="text" id="method-name" maxlength="120" required
+                           placeholder="Скорость резания">
+                  </div>
+                  <div>
+                    <label for="method-order">Порядок</label>
+                    <input type="number" id="method-order" value="0">
+                  </div>
+                </div>
+                <label for="method-description">Описание — модель по нему выбирает методику</label>
+                <input type="text" id="method-description" maxlength="500"
+                       placeholder="по диаметру заготовки и оборотам шпинделя">
+
+                <label for="method-params">Параметры — по одному в строке: имя | единица | пояснение</label>
+                <textarea id="method-params" rows="4" spellcheck="false"
+                          placeholder="D | мм | диаметр заготовки&#10;n | об/мин | обороты шпинделя"></textarea>
+
+                <label for="method-steps">Шаги — по одному в строке: имя = формула | единица | пояснение</label>
+                <textarea id="method-steps" rows="6" spellcheck="false"
+                          placeholder="v = pi * D * n / 1000 | м/мин | скорость резания"></textarea>
+                <p class="hint">
+                  В формулах доступны: + − * / // % **, скобки, pi, e, sqrt, log,
+                  log10, sin, cos, tan, abs, min, max, floor, ceil, round,
+                  round_half_up. Числа с точкой. Каждый следующий шаг может
+                  ссылаться на имена предыдущих. Итог методики — последний шаг.
+                </p>
+
+                <label class="event-allday">
+                  <input type="checkbox" id="method-active" checked> Активна (выдаётся модели)
+                </label>
+
+                <div class="calc-try">
+                  <button type="button" class="btn btn-small" id="method-try-btn">Проверить на числах</button>
+                  <span class="hint" id="method-try-hint">сохраните методику, затем подставьте значения</span>
+                  <div id="method-try-out"></div>
+                </div>
+
+                <div class="modal-actions">
+                  <button type="submit" class="btn btn-primary">Сохранить</button>
+                  <button type="button" class="btn" id="method-cancel-btn">Отмена</button>
+                </div>
+              </form>
+            </div>
+          </div>
           </div>
 
           <div class="admin-panel" id="admin-panel-analytics" role="tabpanel"

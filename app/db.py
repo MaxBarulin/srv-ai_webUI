@@ -139,6 +139,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- §17: справочник методик расчёта. Параметры и шаги хранятся разобранными
+-- в JSON; формулы проверяются при сохранении безопасным разборщиком из
+-- app/calc.py, чтобы опечатка администратора всплыла сразу, а не при
+-- первом обращении модели.
+CREATE TABLE IF NOT EXISTS calc_methods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    params_json TEXT NOT NULL DEFAULT '[]',
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 # Индексы для колонок, добавляемых миграциями (в SCHEMA их создать нельзя —

@@ -412,6 +412,22 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   white-space: nowrap;
 }
 
+/* §17: окно методики шире обычного — формулы не должны переноситься */
+.modal.modal-wide { width: 760px; }
+.modal-wide textarea {
+  width: 100%;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+}
+.method-off { color: var(--osk-slate); }
+.calc-try {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--osk-line);
+}
+.calc-try .hint { display: inline; margin-left: 10px; }
+.calc-try .calc-trace { margin-top: 12px; }
+
 /* §17: ход расчёта под плашкой инструмента — моноширинный, чтобы формулы
    и числа читались столбиком и глаз ловил несоответствие единиц. */
 .tool-chip.calc { display: block; }

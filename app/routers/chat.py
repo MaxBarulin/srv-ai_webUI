@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.appsettings import calc_allowed_for
 from app.audit import utcnow_iso
+from app.calc_methods import active_methods, build_catalogue
 from app.auth import client_ip, get_current_user
 from app.config import settings
 from app.db import get_connection, get_db
@@ -22,6 +23,7 @@ from app.pii import mask_text
 from app.queue import QueueTimeout, llm_queue
 from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
+    CALC_METHOD_TOOLS,
     CALC_SYSTEM_HINT,
     CALC_TOOLS,
     MAX_TOOL_ITERATIONS,
@@ -438,8 +440,15 @@ async def send_message(
     # разрешён настройкой. Флаг из запроса — всего лишь пожелание клиента,
     # право проверяется здесь, на сервере.
     use_calc = payload.use_calc and await calc_allowed_for(db, user)
+    calc_methods = await active_methods(db) if use_calc else []
     if use_calc:
-        spec_prompt = f"{spec_prompt}\n\n{CALC_SYSTEM_HINT}".strip()
+        # Каталог методик кладём прямо в системное сообщение: отдельный
+        # инструмент поиска стоил бы лишнего круга через модель.
+        hint = CALC_SYSTEM_HINT
+        catalogue = build_catalogue(calc_methods)
+        if catalogue:
+            hint = f"{hint}\n\n{catalogue}"
+        spec_prompt = f"{spec_prompt}\n\n{hint}".strip()
 
     # Изображения передаются модели через OpenAI-формат image_url (§16)
     if image_urls:
@@ -475,6 +484,10 @@ async def send_message(
     tools = list(TOOLS_SPEC) if payload.use_tools else []
     if use_calc:
         tools += CALC_TOOLS
+        # Инструмент методик выдаём только при непустом справочнике, иначе
+        # модель начнёт придумывать несуществующие номера
+        if calc_methods:
+            tools += CALC_METHOD_TOOLS
     tools = tools or None
 
     def _may_be_tool_json(text: str) -> bool:
@@ -510,7 +523,8 @@ async def send_message(
             result, label = await execute_tool(user, name, args, user_ip)
             data = {"label": label}
             activity = {"label": label, "status": "ok"}
-            if name == "calc_run" and isinstance(result, dict) and result.get("steps"):
+            if name in ("calc_run", "calc_method") \
+                    and isinstance(result, dict) and result.get("steps"):
                 # Трасса расчёта показывается пользователю и уходит в историю:
                 # нормировочную цифру нельзя принимать на слово, должно быть
                 # видно, из каких формул она получена — и через полгода тоже.

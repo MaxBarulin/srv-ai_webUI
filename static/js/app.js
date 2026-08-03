@@ -1,6 +1,7 @@
 // Каркас SPA: навигация по разделам, текущий пользователь, раздел «Администрирование».
 import { api } from "/static/js/api.js";
-import { initChat, setCalcAvailable, setRagAvailable } from "/static/js/chat.js";
+import { formatCalcValue, initChat, setCalcAvailable, setRagAvailable }
+  from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
 import { initCalendar } from "/static/js/calendar.js";
 
@@ -176,6 +177,153 @@ async function loadCalcSettings() {
     const s = await api("/api/admin/calc/settings");
     document.getElementById("calc-access").value = s.access || "admin";
   } catch { /* необязательно: панель просто останется со значением по умолчанию */ }
+  await loadMethods();
+}
+
+// --- Справочник методик расчёта ---
+
+let methods = [];
+let editingMethodId = null;
+
+async function loadMethods() {
+  try {
+    methods = await api("/api/admin/calc/methods");
+  } catch {
+    methods = [];
+    return;
+  }
+  document.getElementById("methods-tbody").replaceChildren(...methods.map(methodRow));
+}
+
+function methodRow(m) {
+  const tr = document.createElement("tr");
+  const cells = [
+    `#${m.id}`,
+    m.name,
+    m.params.map((p) => p.name).join(", ") || "—",
+    String(m.steps.length),
+    m.is_active ? "да" : "нет",
+  ];
+  cells.forEach((text, i) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (i === 4 && !m.is_active) td.className = "method-off";
+    tr.appendChild(td);
+  });
+
+  const actions = document.createElement("td");
+  actions.className = "actions";
+  const edit = document.createElement("button");
+  edit.className = "btn btn-small";
+  edit.textContent = "Изменить";
+  edit.addEventListener("click", () => openMethod(m));
+  actions.appendChild(edit);
+  const del = document.createElement("button");
+  del.className = "btn btn-small btn-danger ml-8";
+  del.textContent = "Удалить";
+  del.addEventListener("click", () => deleteMethod(m));
+  actions.appendChild(del);
+  tr.appendChild(actions);
+  return tr;
+}
+
+function openMethod(m) {
+  editingMethodId = m ? m.id : null;
+  document.getElementById("method-modal-title").textContent =
+    m ? `Методика #${m.id}` : "Новая методика";
+  document.getElementById("method-name").value = m ? m.name : "";
+  document.getElementById("method-description").value = m ? m.description : "";
+  document.getElementById("method-params").value = m ? m.params_text : "";
+  document.getElementById("method-steps").value = m ? m.steps_text : "";
+  document.getElementById("method-order").value = m ? m.sort_order : 0;
+  document.getElementById("method-active").checked = m ? m.is_active : true;
+  document.getElementById("method-try-out").replaceChildren();
+  document.getElementById("method-try-hint").textContent = m
+    ? "подставьте значения параметров и проверьте расчёт"
+    : "сохраните методику, затем подставьте значения";
+  document.getElementById("method-modal").hidden = false;
+  document.getElementById("method-name").focus();
+}
+
+function closeMethod() {
+  document.getElementById("method-modal").hidden = true;
+}
+
+async function saveMethod(e) {
+  e.preventDefault();
+  const body = {
+    name: document.getElementById("method-name").value,
+    description: document.getElementById("method-description").value,
+    params_text: document.getElementById("method-params").value,
+    steps_text: document.getElementById("method-steps").value,
+    is_active: document.getElementById("method-active").checked,
+    sort_order: Number(document.getElementById("method-order").value) || 0,
+  };
+  try {
+    const saved = editingMethodId === null
+      ? await api("/api/admin/calc/methods", { method: "POST", body })
+      : await api(`/api/admin/calc/methods/${editingMethodId}`, { method: "PUT", body });
+    toast(`Методика «${saved.name}» сохранена`);
+    await loadMethods();
+    // остаёмся в окне: сразу после сохранения удобно прогнать на числах
+    openMethod(methods.find((m) => m.id === saved.id) || saved);
+  } catch (err) {
+    // Ошибка формулы приходит с номером строки — показываем её целиком
+    toast(err.detail || "Не удалось сохранить методику", true);
+  }
+}
+
+async function deleteMethod(m) {
+  if (!confirm(`Удалить методику «${m.name}»?\n\n` +
+               "Прежние ответы не изменятся: формулы сохранены в них самих.")) return;
+  try {
+    await api(`/api/admin/calc/methods/${m.id}`, { method: "DELETE" });
+    toast(`Методика «${m.name}» удалена`);
+    loadMethods();
+  } catch (e) {
+    toast(e.detail || "Не удалось удалить методику", true);
+  }
+}
+
+// Прогон на пробных числах: проверить методику до того, как ею начнут пользоваться
+async function tryMethod() {
+  const out = document.getElementById("method-try-out");
+  out.replaceChildren();
+  if (editingMethodId === null) {
+    toast("Сначала сохраните методику", true);
+    return;
+  }
+  const m = methods.find((x) => x.id === editingMethodId);
+  if (!m) return;
+  const params = {};
+  for (const p of m.params) {
+    const raw = prompt(`${p.name}${p.unit ? ` (${p.unit})` : ""}` +
+                       `${p.description ? ` — ${p.description}` : ""}:`);
+    if (raw === null) return;
+    const value = Number(raw.replace(",", "."));
+    if (!isFinite(value)) { toast(`«${raw}» — не число`, true); return; }
+    params[p.name] = value;
+  }
+  try {
+    const r = await api(`/api/admin/calc/methods/${m.id}/try`, { method: "POST", body: { params } });
+    const table = document.createElement("table");
+    table.className = "calc-trace";
+    const body = document.createElement("tbody");
+    for (const step of r.steps) {
+      const tr = document.createElement("tr");
+      for (const text of [step.name, "=", step.expr,
+                          `${formatCalcValue(step.value)}${step.unit ? ` ${step.unit}` : ""}`]) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    out.appendChild(table);
+  } catch (e) {
+    toast(e.detail || "Расчёт не удался", true);
+  }
 }
 
 async function saveCalcSettings() {
@@ -767,6 +915,13 @@ async function init() {
     saveSpec(null, { name: "Новая специализация", system_prompt: "", is_active: true, sort_order: 0 }));
   document.getElementById("examples-save-btn").addEventListener("click", saveExamples);
   document.getElementById("calc-access-save").addEventListener("click", saveCalcSettings);
+  document.getElementById("method-add-btn").addEventListener("click", () => openMethod(null));
+  document.getElementById("method-form").addEventListener("submit", saveMethod);
+  document.getElementById("method-cancel-btn").addEventListener("click", closeMethod);
+  document.getElementById("method-try-btn").addEventListener("click", tryMethod);
+  document.getElementById("method-modal").addEventListener("click", (e) => {
+    if (e.target.id === "method-modal") closeMethod();
+  });
   document.getElementById("feedback-export-btn").addEventListener("click", exportFeedback);
   document.getElementById("audit-refresh").addEventListener("click", () => { auditOffset = 0; loadAudit(); });
   document.getElementById("audit-action").addEventListener("change", () => { auditOffset = 0; loadAudit(); });

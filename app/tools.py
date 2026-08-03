@@ -19,6 +19,7 @@ from datetime import datetime
 
 from app.audit import utcnow_iso, write_audit
 from app.calc import CalcError, run_steps
+from app.calc_methods import run_method
 from app.config import settings
 from app.db import get_connection
 from app.llm import APP_TZ, _WEEKDAYS_RU
@@ -276,6 +277,23 @@ CALC_TOOLS: list[dict] = [
                   "description": "Исходные числовые данные: имя величины → число",
               },
           }, ["steps"]),
+]
+
+# Отдельным набором: выдаётся, только если в справочнике есть хотя бы одна
+# включённая методика — иначе модель получила бы инструмент, которым нечего
+# вызывать, и стала бы придумывать несуществующие номера.
+CALC_METHOD_TOOLS: list[dict] = [
+    _tool("calc_method",
+          "Выполнить готовую методику расчёта из справочника предприятия. "
+          "Список методик с их номерами и параметрами дан в системном "
+          "сообщении. Формулы менять нельзя — только подставить числа.",
+          {
+              "method_id": {"type": "integer",
+                            "description": "Номер методики из списка (после #)"},
+              "params": {"type": "object",
+                         "description": "Значения параметров: имя → число. "
+                                        "Нужны все параметры методики"},
+          }, ["method_id", "params"]),
 ]
 
 # Подсказка в системный промпт: без неё модель считает сама и ошибается
@@ -601,6 +619,30 @@ def _fmt_number(value: float) -> str:
     return f"{value:.6g}".replace(".", ",")
 
 
+async def _calc_method(db, user, args):
+    method_id = _req_int(args, "method_id")
+    given = args.get("params") or {}
+    if not isinstance(given, dict):
+        raise ToolError("Параметр params должен быть объектом «имя: число»")
+    try:
+        out = await run_method(db, method_id, given)
+    except CalcError as exc:
+        raise ToolError(str(exc))
+    method, trace = out["method"], out["trace"]
+    last = trace[-1]
+    result = {
+        "method": method["name"],
+        "steps": trace,
+        "result": last["value"],
+        "result_name": last["name"],
+        "result_unit": last["unit"],
+    }
+    label = f"методика «{method['name']}»: {last['name']} = {_fmt_number(last['value'])}"
+    if last["unit"]:
+        label += f" {last['unit']}"
+    return result, label, "calc", str(method_id)
+
+
 _HANDLERS = {
     "notes_search": _notes_search,
     "notes_get": _notes_get,
@@ -613,6 +655,7 @@ _HANDLERS = {
     "calendar_delete": _calendar_delete,
     "get_current_datetime": _get_current_datetime,
     "calc_run": _calc_run,
+    "calc_method": _calc_method,
 }
 
 
