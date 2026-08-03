@@ -168,6 +168,63 @@ async function loadUsers() {
   loadAudit();
 }
 
+// --- Администрирование: вкладки ---
+//
+// Панели уже загружены и наполнены (loadUsers тянет всё сразу, как и раньше) —
+// вкладки только показывают и прячут. Так переключение мгновенное, а поведение
+// запросов к серверу осталось прежним.
+
+const ADMIN_TAB_KEY = "admin-tab";
+
+function showAdminTab(name) {
+  const tabs = [...document.querySelectorAll(".admin-tabs .tab")];
+  if (!tabs.some((t) => t.dataset.tab === name)) name = tabs[0]?.dataset.tab;
+  if (!name) return;
+  for (const tab of tabs) {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    // Подвижный фокус: в полосу вкладок Tab заходит один раз, дальше — стрелки
+    tab.tabIndex = active ? 0 : -1;
+    document.getElementById(`admin-panel-${tab.dataset.tab}`).hidden = !active;
+  }
+  try { localStorage.setItem(ADMIN_TAB_KEY, name); } catch { /* приватный режим */ }
+}
+
+function initAdminTabs() {
+  const bar = document.querySelector(".admin-tabs");
+  if (!bar) return;
+  const tabs = [...bar.querySelectorAll(".tab")];
+
+  bar.addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (tab) showAdminTab(tab.dataset.tab);
+  });
+
+  bar.addEventListener("keydown", (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    let next = null;
+    if (step) {
+      const i = tabs.findIndex((t) => t.dataset.tab === currentAdminTab());
+      next = tabs[(i + step + tabs.length) % tabs.length];
+    } else if (e.key === "Home") next = tabs[0];
+    else if (e.key === "End") next = tabs[tabs.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    showAdminTab(next.dataset.tab);
+    next.focus();
+  });
+
+  let saved = null;
+  try { saved = localStorage.getItem(ADMIN_TAB_KEY); } catch { /* приватный режим */ }
+  showAdminTab(saved || tabs[0].dataset.tab);
+}
+
+function currentAdminTab() {
+  const active = document.querySelector(".admin-tabs .tab.active");
+  return active ? active.dataset.tab : null;
+}
+
 // --- Администрирование: группы (отделы, бюро) ---
 
 let groups = [];
@@ -677,6 +734,7 @@ async function init() {
   document.getElementById("password-form").addEventListener("submit", changePassword);
 
   // Администрирование: примеры и выгрузка
+  initAdminTabs();
   document.getElementById("create-user-form").addEventListener("submit", createUser);
   document.getElementById("group-add-btn").addEventListener("click", createGroup);
   document.getElementById("new-group-name").addEventListener("keydown", (e) => {

@@ -412,6 +412,18 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   white-space: nowrap;
 }
 
+/* Вкладки раздела «Администрирование» — те же .tab, что в заметках и календаре,
+   на общей линии-подложке. */
+.admin-tabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--osk-line);
+}
+.admin-tabs .tab { border-bottom: 1px solid var(--osk-line); margin-bottom: -1px; }
+.admin-tabs .tab.active { border-bottom-color: var(--osk-paper); }
+
 .form-row { display: flex; gap: 16px; }
 .form-row > div { flex: 1; }
 /* Кнопка «Добавить группу» — на одной линии с полем ввода рядом */

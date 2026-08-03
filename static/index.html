@@ -271,6 +271,33 @@
         </section>
 
         <section id="section-admin" hidden>
+          <!-- Вкладки: раздел разросся, всё сразу на одной странице не читается.
+               Панели ниже — та же разметка, что и была, просто разложена по группам. -->
+          <nav class="admin-tabs" role="tablist" aria-label="Разделы администрирования">
+            <button type="button" class="tab active" role="tab"
+                    id="admin-tab-users" data-tab="users"
+                    aria-controls="admin-panel-users" aria-selected="true"
+                    tabindex="0">Пользователи</button>
+            <button type="button" class="tab" role="tab"
+                    id="admin-tab-groups" data-tab="groups"
+                    aria-controls="admin-panel-groups" aria-selected="false"
+                    tabindex="-1">Группы</button>
+            <button type="button" class="tab" role="tab"
+                    id="admin-tab-chat" data-tab="chat"
+                    aria-controls="admin-panel-chat" aria-selected="false"
+                    tabindex="-1">Чат</button>
+            <button type="button" class="tab" role="tab"
+                    id="admin-tab-analytics" data-tab="analytics"
+                    aria-controls="admin-panel-analytics" aria-selected="false"
+                    tabindex="-1">Аналитика</button>
+            <button type="button" class="tab" role="tab"
+                    id="admin-tab-audit" data-tab="audit"
+                    aria-controls="admin-panel-audit" aria-selected="false"
+                    tabindex="-1">Аудит</button>
+          </nav>
+
+          <div class="admin-panel" id="admin-panel-users" role="tabpanel"
+               aria-labelledby="admin-tab-users">
           <h3 class="section-title">Пользователи</h3>
           <table class="users">
             <thead>
@@ -322,7 +349,11 @@
             </form>
           </div>
 
-          <h3 class="section-title mt-32">Группы (отделы, бюро)</h3>
+          </div>
+
+          <div class="admin-panel" id="admin-panel-groups" role="tabpanel"
+               aria-labelledby="admin-tab-groups" hidden>
+          <h3 class="section-title">Группы (отделы, бюро)</h3>
           <div class="card">
             <p class="hint">
               Группа определяет, кто видит общие заметки и события. Пользователь
@@ -346,7 +377,11 @@
             </div>
           </div>
 
-          <h3 class="section-title mt-32">Специализации (режимы чата)</h3>
+          </div>
+
+          <div class="admin-panel" id="admin-panel-chat" role="tabpanel"
+               aria-labelledby="admin-tab-chat" hidden>
+          <h3 class="section-title">Специализации (режимы чата)</h3>
           <table class="users">
             <thead>
               <tr><th>Порядок</th><th>Название</th><th>Системный промпт</th><th>Активна</th><th></th></tr>
@@ -366,7 +401,11 @@
             </div>
           </div>
 
-          <h3 class="section-title mt-32">Обратная связь</h3>
+          </div>
+
+          <div class="admin-panel" id="admin-panel-analytics" role="tabpanel"
+               aria-labelledby="admin-tab-analytics" hidden>
+          <h3 class="section-title">Обратная связь</h3>
           <div class="card card-narrow">
             <p class="hint">Выгрузка оценок ответов модели (задел под датасет LoRA).</p>
             <button type="button" class="btn" id="feedback-export-btn">Скачать feedback.jsonl</button>
@@ -375,7 +414,11 @@
           <h3 class="section-title mt-32">Метрики</h3>
           <div class="metrics-grid" id="metrics-grid"></div>
 
-          <h3 class="section-title mt-32">Журнал аудита</h3>
+          </div>
+
+          <div class="admin-panel" id="admin-panel-audit" role="tabpanel"
+               aria-labelledby="admin-tab-audit" hidden>
+          <h3 class="section-title">Журнал аудита</h3>
           <div class="audit-controls">
             <select id="audit-action">
               <option value="">Все действия</option>
@@ -405,6 +448,8 @@
             <button type="button" class="btn btn-small" id="audit-prev">‹ Назад</button>
             <button type="button" class="btn btn-small" id="audit-next">Вперёд ›</button>
           </div>
+          </div>
+
         </section>
       </main>
     </div>
