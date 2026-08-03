@@ -1392,6 +1392,13 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 }
 .cal-chip:hover { background: var(--osk-line); }
 .cal-chip.shared { border-left-color: var(--osk-red); }
+/* Продолжение многодневного события: без левой засечки, чтобы вертикальная
+   черта не повторялась в каждом дне. Правило идёт ПОСЛЕ .shared — при равной
+   специфичности решает порядок, иначе у общих событий засечка осталась бы.
+   Пустая полоска сохраняет высоту строки: иначе она схлопнулась бы в ниточку
+   и выпала из ряда с соседними днями. */
+.cal-chip.cont, .cal-chip.cont.shared { border-left-color: transparent; }
+.cal-chip:empty::before { content: "\00A0"; }
 
 .cal-list {
   flex: 1;

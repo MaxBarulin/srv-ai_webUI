@@ -183,8 +183,23 @@ function eventChip(ev, day) {
   const chip = document.createElement("div");
   chip.className = ev.scope === "shared" ? "cal-chip shared" : "cal-chip";
   const start = parseISO(ev.starts_at);
-  const showTime = !ev.all_day && sameDay(start, day);
-  chip.textContent = showTime ? `${fmtTime(start)} ${ev.title}` : ev.title;
+  const end = parseISO(ev.ends_at);
+  const multiDay = !sameDay(start, end);
+  const isStart = sameDay(start, day);
+
+  // У многодневного события название печатаем один раз — в первый его день и
+  // в начале каждой недели, чтобы после переноса строки было видно, что это.
+  // В остальные дни остаётся только полоска: иначе одно событие на две недели
+  // читается как четырнадцать разных.
+  const showTitle = !multiDay || isStart || day.getDay() === 1;
+  const showTime = !ev.all_day && isStart;
+  if (multiDay) {
+    chip.classList.add("span");
+    if (!isStart) chip.classList.add("cont");  // продолжение — без левой засечки
+  }
+  chip.textContent = showTitle
+    ? (showTime ? `${fmtTime(start)} ${ev.title}` : ev.title)
+    : "";
   chip.title = ev.title + (ev.location ? ` — ${ev.location}` : "");
   chip.addEventListener("click", (e) => {
     e.stopPropagation();
