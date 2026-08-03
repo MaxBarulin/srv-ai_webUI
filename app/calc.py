@@ -206,6 +206,47 @@ def check_name(name: str) -> str:
     return name
 
 
+def format_value(value: float) -> str:
+    """Число для текста, который читает МОДЕЛЬ.
+
+    Дробная часть — через точку, а не запятую как в интерфейсе: если модель
+    перенесёт это число в формулу, точка разберётся, а запятая упрётся в
+    отказ «пишите точку» и будет стоить лишней итерации. До десяти значащих
+    цифр без хвоста нулей: округлять историю нельзя, иначе следующий расчёт
+    пойдёт от огрублённого значения.
+    """
+    if isinstance(value, int) or value == int(value):
+        if abs(value) < 1e15:
+            return str(int(value))
+    return f"{value:.10g}"
+
+
+def trace_to_text(trace: list[dict]) -> str:
+    """Трасса расчёта для истории диалога.
+
+    Сам расчёт хранится при сообщении ради интерфейса, но модель на следующем
+    ходу видит только текст своего ответа. Если она ответила скупо, числа для
+    неё пропадают — этот блок возвращает их обратно.
+    """
+    lines = []
+    for step in trace:
+        if not isinstance(step, dict) or not step.get("name"):
+            continue
+        value = step.get("value")
+        has_value = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if not step.get("expr") and not has_value:
+            continue  # битая запись: без формулы и без числа строка бессмысленна
+        line = f"  {step['name']} = {step.get('expr', '')}"
+        if has_value:
+            line += f" → {format_value(value)}"
+            if step.get("unit"):
+                line += f" {step['unit']}"
+        if step.get("comment"):
+            line += f"  ({step['comment']})"
+        lines.append(line)
+    return "[расчёт]\n" + "\n".join(lines) if lines else ""
+
+
 def run_steps(steps: list[dict], given: dict[str, float] | None = None) -> list[dict]:
     """Посчитать цепочку шагов: каждый может ссылаться на предыдущие.
 

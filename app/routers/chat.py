@@ -13,8 +13,9 @@ from pydantic import BaseModel
 
 from app.appsettings import calc_allowed_for
 from app.audit import utcnow_iso
-from app.calc_methods import active_methods, build_catalogue
 from app.auth import client_ip, get_current_user
+from app.calc import trace_to_text
+from app.calc_methods import active_methods, build_catalogue
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, get_server_context_size, stream_chat
@@ -344,17 +345,28 @@ async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
     history = []
     for row in await cursor.fetchall():
         text = row["content"]
-        if row["role"] == "user" and row["tool_calls_json"]:
+        if row["tool_calls_json"]:
             try:
                 meta = json.loads(row["tool_calls_json"])
             except json.JSONDecodeError:
-                meta = {}
-            if isinstance(meta, dict):
+                meta = None
+            # У пользователя в колонке — вложения, у ассистента — список плашек
+            if row["role"] == "user" and isinstance(meta, dict):
                 for att in meta.get("attachments", []):
                     if att.get("image"):
                         text += f"\n[приложено изображение: {att.get('filename', '')}]"
                     elif att.get("text"):
                         text += f"\n\n[Документ: {att.get('filename', 'файл')}]\n{att['text']}"
+            elif row["role"] == "assistant" and isinstance(meta, list):
+                # Трассу расчёта возвращаем модели: сама она на следующем ходу
+                # видит лишь свой текст, и если ответила скупо, числа для неё
+                # пропадают. Впереди ответа — как и на экране: сперва посчитала,
+                # потом сказала.
+                for item in meta:
+                    if isinstance(item, dict) and isinstance(item.get("calc"), list):
+                        block = trace_to_text(item["calc"])
+                        if block:
+                            text = f"{block}\n\n{text}" if text.strip() else block
         if text.strip():
             history.append({"role": row["role"], "content": text})
     return history
