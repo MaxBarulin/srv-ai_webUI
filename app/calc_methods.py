@@ -200,8 +200,14 @@ async def run_method(db: aiosqlite.Connection, method_id: int, given: dict) -> d
             raise CalcError(f"Параметр «{p['name']}» должен быть числом")
         numbers[p["name"]] = float(value)
     if missing:
-        raise CalcError(f"Не переданы параметры методики «{method['name']}»: "
-                        + ", ".join(missing))
+        # Текст уходит модели: без явного «спроси и не повторяй» она пробует
+        # вызвать инструмент снова и жжёт итерации, а то и подставляет числа
+        # «по опыту» — в нормировании это опаснее долгого ответа.
+        raise CalcError(
+            f"Не переданы параметры методики «{method['name']}»: "
+            + ", ".join(missing)
+            + ". Спроси эти значения у пользователя и дождись ответа. "
+              "Не вызывай инструмент повторно и не подставляй числа сам.")
     extra = set(given) - {p["name"] for p in method["params"]}
     if extra:
         raise CalcError(f"Методика «{method['name']}» не принимает: {', '.join(sorted(extra))}")
