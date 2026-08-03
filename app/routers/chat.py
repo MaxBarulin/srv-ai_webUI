@@ -120,14 +120,19 @@ async def create_chat(
         if await cursor.fetchone() is None:
             spec_id = None  # неизвестная/выключенная специализация — просто общий режим
     custom_prompt = payload.custom_prompt.strip()
+    # Расчёты в новом чате включены: у кого инструмента нет — тому тумблер не
+    # виден, а право всё равно проверяется при генерации, так что флаг у него
+    # просто ни на что не влияет. Значение проставляем явно, не полагаясь на
+    # DEFAULT колонки: он остался нулевым, чтобы уже существующие чаты
+    # сохранили своё состояние.
     cursor = await db.execute(
         "INSERT INTO chats (user_id, title, specialization_id, custom_prompt, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "use_calc, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
         (user["id"], title, spec_id, custom_prompt, now, now),
     )
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
-            "custom_prompt": custom_prompt, "use_tools": 1, "use_calc": 0, "enable_thinking": 1,
+            "custom_prompt": custom_prompt, "use_tools": 1, "use_calc": 1, "enable_thinking": 1,
             "pdf_mode": "vision", "created_at": now, "updated_at": now}
 
 
