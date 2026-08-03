@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app import auth
+from app.appsettings import calc_allowed_for
 from app.audit import write_audit
 from app.config import settings
 from app.auth import (
@@ -106,7 +107,9 @@ async def me(
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    # rag_enabled — чтобы UI знал, показывать ли переключатель «База знаний» (§8)
+    # rag_enabled и calc_enabled — чтобы UI знал, показывать ли переключатели
+    # «База знаний» (§8) и «Расчёты» (§17). Право на расчёты определяет сервер:
+    # скрытый тумблер — удобство, а не защита, проверка всё равно при генерации.
     cursor = await db.execute("SELECT font_scale, theme FROM users WHERE id = ?", (user["id"],))
     row = await cursor.fetchone()
     return {
@@ -114,6 +117,7 @@ async def me(
         "font_scale": row["font_scale"] if row else 1,
         "theme": (row["theme"] if row and row["theme"] else "light"),
         "rag_enabled": settings.rag_enabled and bool(settings.rag_base_url),
+        "calc_enabled": await calc_allowed_for(db, user),
     }
 
 

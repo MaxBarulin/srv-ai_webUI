@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.appsettings import calc_allowed_for
 from app.audit import utcnow_iso
 from app.auth import client_ip, get_current_user
 from app.config import settings
@@ -21,6 +22,8 @@ from app.pii import mask_text
 from app.queue import QueueTimeout, llm_queue
 from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
+    CALC_SYSTEM_HINT,
+    CALC_TOOLS,
     MAX_TOOL_ITERATIONS,
     TOOLS_SPEC,
     ToolError,
@@ -52,6 +55,7 @@ class ChatUpdateRequest(BaseModel):
     specialization_id: int | None = None
     custom_prompt: str | None = None
     use_tools: bool | None = None         # пер-чатовый тумблер «Заметки/Календарь»
+    use_calc: bool | None = None          # пер-чатовый тумблер «Расчёты» (§17)
     enable_thinking: bool | None = None   # пер-чатовый тумблер «Размышления»
     pdf_mode: str | None = None           # режим парсинга PDF: vision | text | auto
 
@@ -65,6 +69,7 @@ class Attachment(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     use_tools: bool = True  # переключатель «Заметки/Календарь» в шапке чата (§4)
+    use_calc: bool = False  # переключатель «Расчёты» (§17)
     use_rag: bool = False   # переключатель «База знаний» (§8)
     enable_thinking: bool = True  # переключатель «Размышления» (thinking-режим)
     attachments: list[Attachment] = []
@@ -72,7 +77,8 @@ class SendMessageRequest(BaseModel):
 
 async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) -> aiosqlite.Row:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
+        "SELECT id, title, specialization_id, custom_prompt, use_tools, use_calc, "
+        "enable_thinking, "
         "pdf_mode, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
@@ -88,7 +94,8 @@ async def list_chats(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> list[dict]:
     cursor = await db.execute(
-        "SELECT id, title, specialization_id, custom_prompt, use_tools, enable_thinking, "
+        "SELECT id, title, specialization_id, custom_prompt, use_tools, use_calc, "
+        "enable_thinking, "
         "pdf_mode, created_at, updated_at FROM chats WHERE user_id = ? "
         "ORDER BY updated_at DESC, id DESC",
         (user["id"],),
@@ -118,7 +125,7 @@ async def create_chat(
     )
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
-            "custom_prompt": custom_prompt, "use_tools": 1, "enable_thinking": 1,
+            "custom_prompt": custom_prompt, "use_tools": 1, "use_calc": 0, "enable_thinking": 1,
             "pdf_mode": "vision", "created_at": now, "updated_at": now}
 
 
@@ -154,6 +161,9 @@ async def update_chat(
     use_tools = row["use_tools"]
     if "use_tools" in provided and payload.use_tools is not None:
         use_tools = int(payload.use_tools)
+    use_calc = row["use_calc"]
+    if "use_calc" in provided and payload.use_calc is not None:
+        use_calc = int(payload.use_calc)
     enable_thinking = row["enable_thinking"]
     if "enable_thinking" in provided and payload.enable_thinking is not None:
         enable_thinking = int(payload.enable_thinking)
@@ -166,8 +176,9 @@ async def update_chat(
 
     await db.execute(
         "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, "
-        "use_tools = ?, enable_thinking = ?, pdf_mode = ?, updated_at = ? WHERE id = ?",
-        (title, spec_id, custom_prompt, use_tools, enable_thinking, pdf_mode,
+        "use_tools = ?, use_calc = ?, enable_thinking = ?, pdf_mode = ?, "
+        "updated_at = ? WHERE id = ?",
+        (title, spec_id, custom_prompt, use_tools, use_calc, enable_thinking, pdf_mode,
          utcnow_iso(), chat_id),
     )
     await db.commit()
@@ -423,6 +434,13 @@ async def send_message(
     history = await _build_history(db, chat_id)
     spec_prompt = await _chat_spec_prompt(db, chat)
 
+    # §17: инструмент расчётов выдаётся модели, только если пользователю он
+    # разрешён настройкой. Флаг из запроса — всего лишь пожелание клиента,
+    # право проверяется здесь, на сервере.
+    use_calc = payload.use_calc and await calc_allowed_for(db, user)
+    if use_calc:
+        spec_prompt = f"{spec_prompt}\n\n{CALC_SYSTEM_HINT}".strip()
+
     # Изображения передаются модели через OpenAI-формат image_url (§16)
     if image_urls:
         user_content: object = [{"type": "text", "text": text_for_model or "Проанализируй вложение."}]
@@ -453,7 +471,11 @@ async def send_message(
         auto_title = " ".join(base.split())[:AUTO_TITLE_MAX_LEN] or DEFAULT_TITLE
 
     user_ip = client_ip(request)
-    tools = TOOLS_SPEC if payload.use_tools else None
+    # Наборы независимы: «Заметки/Календарь» и «Расчёты» включаются порознь
+    tools = list(TOOLS_SPEC) if payload.use_tools else []
+    if use_calc:
+        tools += CALC_TOOLS
+    tools = tools or None
 
     def _may_be_tool_json(text: str) -> bool:
         # Пока накопленный контент похож на начало JSON-вызова (fallback §7) — придерживаем
@@ -486,7 +508,15 @@ async def send_message(
                 return (result, ("tool_confirm", {"token": token, "label": label},
                                  {"label": label, "status": "confirm", "token": token}))
             result, label = await execute_tool(user, name, args, user_ip)
-            return (result, ("tool", {"label": label}, {"label": label, "status": "ok"}))
+            data = {"label": label}
+            activity = {"label": label, "status": "ok"}
+            if name == "calc_run" and isinstance(result, dict) and result.get("steps"):
+                # Трасса расчёта показывается пользователю и уходит в историю:
+                # нормировочную цифру нельзя принимать на слово, должно быть
+                # видно, из каких формул она получена — и через полгода тоже.
+                data["calc"] = result["steps"]
+                activity["calc"] = result["steps"]
+            return (result, ("tool", data, activity))
         except ToolError as exc:
             return ({"error": str(exc)},
                     ("tool", {"label": f"{name}: {exc}", "error": True},

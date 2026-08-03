@@ -412,6 +412,29 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   white-space: nowrap;
 }
 
+/* §17: ход расчёта под плашкой инструмента — моноширинный, чтобы формулы
+   и числа читались столбиком и глаз ловил несоответствие единиц. */
+.tool-chip.calc { display: block; }
+.calc-trace {
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.calc-trace td { padding: 0 8px 0 0; vertical-align: baseline; }
+.calc-trace .calc-name { text-align: right; font-weight: 600; white-space: nowrap; }
+.calc-trace .calc-eq { color: var(--osk-slate); }
+.calc-trace .calc-expr { white-space: pre-wrap; word-break: break-word; }
+.calc-trace .calc-value { white-space: nowrap; font-weight: 600; }
+.calc-trace .calc-comment { color: var(--osk-slate); font-family: inherit; }
+@media (max-width: 700px) {
+  .calc-trace, .calc-trace tbody, .calc-trace tr, .calc-trace td { display: block; }
+  .calc-trace tr { margin-bottom: 8px; }
+  .calc-trace .calc-name, .calc-trace .calc-eq { display: inline; text-align: left; }
+  .calc-trace .calc-value { display: inline-block; }
+}
+
 /* Вкладки раздела «Администрирование» — те же .tab, что в заметках и календаре,
    на общей линии-подложке. */
 .admin-tabs {

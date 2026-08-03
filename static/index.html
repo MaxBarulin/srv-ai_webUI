@@ -81,6 +81,13 @@
                   База знаний
                   <span class="switch"><input type="checkbox" id="ctx-rag"><i></i></span>
                 </label>
+                <!-- §17: показывается только тем, кому расчёты разрешены
+                     настройкой в разделе «Администрирование» -->
+                <label class="opt-row" id="ctx-calc-label" hidden
+                       title="Точные вычисления через инструмент: модель не считает в уме, а показывает ход расчёта">
+                  Расчёты
+                  <span class="switch"><input type="checkbox" id="ctx-calc"><i></i></span>
+                </label>
                 <label class="opt-row"
                        title="Режим размышлений модели (thinking). Выключите для быстрых коротких ответов">
                   Размышления
@@ -287,6 +294,10 @@
                     aria-controls="admin-panel-chat" aria-selected="false"
                     tabindex="-1">Чат</button>
             <button type="button" class="tab" role="tab"
+                    id="admin-tab-calc" data-tab="calc"
+                    aria-controls="admin-panel-calc" aria-selected="false"
+                    tabindex="-1">Расчёты</button>
+            <button type="button" class="tab" role="tab"
                     id="admin-tab-analytics" data-tab="analytics"
                     aria-controls="admin-panel-analytics" aria-selected="false"
                     tabindex="-1">Аналитика</button>
@@ -401,6 +412,36 @@
             </div>
           </div>
 
+          </div>
+
+          <div class="admin-panel" id="admin-panel-calc" role="tabpanel"
+               aria-labelledby="admin-tab-calc" hidden>
+          <h3 class="section-title">Инструмент расчётов</h3>
+          <div class="card card-narrow">
+            <p class="hint">
+              Точные вычисления вместо счёта модели «в уме»: она передаёт
+              формулы инструменту и показывает ход расчёта по шагам.
+              Пользователь включает его тумблером «Расчёты» в параметрах чата.
+            </p>
+            <div class="form-row">
+              <div>
+                <label for="calc-access">Кому доступен</label>
+                <select id="calc-access">
+                  <option value="off">Выключен у всех</option>
+                  <option value="admin">Только администраторам</option>
+                  <option value="all">Всем сотрудникам</option>
+                </select>
+              </div>
+              <div></div>
+            </div>
+            <p class="hint mt-18">
+              Изменение действует сразу, со следующего запроса — перезапуск
+              не нужен. «Выключен у всех» гасит инструмент мгновенно.
+            </p>
+            <div class="mt-18">
+              <button type="button" class="btn btn-primary" id="calc-access-save">Сохранить</button>
+            </div>
+          </div>
           </div>
 
           <div class="admin-panel" id="admin-panel-analytics" role="tabpanel"

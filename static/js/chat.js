@@ -74,6 +74,8 @@ export function initChat(toast, announce) {
   els.ctxTools = $("ctx-tools");
   els.ctxRag = $("ctx-rag");
   els.ctxRagLabel = $("ctx-rag-label");
+  els.ctxCalc = $("ctx-calc");
+  els.ctxCalcLabel = $("ctx-calc-label");
   els.ctxThink = $("ctx-think");
   els.ctxPdf = $("ctx-pdf");
   els.examples = $("chat-examples");
@@ -134,6 +136,8 @@ export function initChat(toast, announce) {
     () => saveChatToggle("use_tools", els.ctxTools.checked));
   els.ctxThink.addEventListener("change",
     () => saveChatToggle("enable_thinking", els.ctxThink.checked));
+  els.ctxCalc.addEventListener("change",
+    () => saveChatToggle("use_calc", els.ctxCalc.checked));
   els.ctxPdf.addEventListener("change",
     () => saveChatToggle("pdf_mode", els.ctxPdf.checked ? "vision" : "text"));
 
@@ -200,6 +204,13 @@ export function setRagAvailable(available) {
   els.ctxRagLabel.hidden = !available;
 }
 
+// §17: тумблер «Расчёты» виден, только если инструмент разрешён этому
+// пользователю. Скрытие — удобство, а не защита: право всё равно проверяется
+// на сервере при каждой генерации.
+export function setCalcAvailable(available) {
+  els.ctxCalcLabel.hidden = !available;
+}
+
 // --- Специализации и примеры (§15) ---
 
 // Кэш специализаций — используется только в модалке «Промпт»: новый чат
@@ -224,6 +235,7 @@ function applyChatToggles() {
   const chat = activeChat();
   if (!chat) return;
   els.ctxTools.checked = Boolean(chat.use_tools);
+  els.ctxCalc.checked = Boolean(chat.use_calc);
   els.ctxThink.checked = Boolean(chat.enable_thinking);
   els.ctxPdf.checked = (chat.pdf_mode || "vision") !== "text";
 }
@@ -553,7 +565,43 @@ function setChipOutcome(chip, status, label) {
     : `⚠️ Ошибка: ${label}`;
 }
 
-function toolChip({ label, status, token }) {
+// §17: ход расчёта таблицей. Нормировщик не принимает цифру от ИИ на слово —
+// он должен видеть формулу каждого шага. Всё через textContent: числа и
+// формулы приходят от модели, в разметку они попадать не должны.
+function calcTrace(steps) {
+  const box = document.createElement("table");
+  box.className = "calc-trace";
+  const body = document.createElement("tbody");
+  for (const step of steps) {
+    const tr = document.createElement("tr");
+    const cells = [
+      step.name,
+      "=",
+      step.expr,
+      formatCalcValue(step.value) + (step.unit ? ` ${step.unit}` : ""),
+      step.comment || "",
+    ];
+    cells.forEach((text, i) => {
+      const td = document.createElement("td");
+      td.className = ["calc-name", "calc-eq", "calc-expr", "calc-value", "calc-comment"][i];
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  }
+  box.appendChild(body);
+  return box;
+}
+
+// Разумная точность: целые без хвоста, дробные — до четырёх знаков
+function formatCalcValue(value) {
+  if (typeof value !== "number" || !isFinite(value)) return String(value);
+  if (Number.isInteger(value)) return String(value);
+  const rounded = Math.round(value * 10000) / 10000;
+  return String(rounded).replace(".", ",");
+}
+
+function toolChip({ label, status, token, calc }) {
   const chip = document.createElement("div");
   chip.className = "tool-chip";
   if (status === "confirm" && token) {
@@ -576,6 +624,10 @@ function toolChip({ label, status, token }) {
     chip.textContent = `⚠️ Ошибка: ${label}`;
   } else {
     chip.textContent = `🔧 ${label}`;
+  }
+  if (Array.isArray(calc) && calc.length) {
+    chip.classList.add("calc");
+    chip.appendChild(calcTrace(calc));
   }
   return chip;
 }
@@ -1123,6 +1175,7 @@ async function submitTurn(chatId, content, attachments) {
       body: JSON.stringify({
         content,
         use_tools: els.ctxTools.checked,
+        use_calc: !els.ctxCalcLabel.hidden && els.ctxCalc.checked,
         use_rag: !els.ctxRagLabel.hidden && els.ctxRag.checked,
         enable_thinking: els.ctxThink.checked,
         attachments: attachments.map((a) => ({
@@ -1157,7 +1210,8 @@ async function submitTurn(chatId, content, attachments) {
           if (!st.genStart) st.genStart = performance.now();
           st.contentText += data.text;
         } else if (event === "tool") {
-          live.insertBefore(toolChip({ label: data.label, status: data.error ? "error" : "ok" }), liveBody);
+          live.insertBefore(toolChip({ label: data.label, calc: data.calc,
+                                       status: data.error ? "error" : "ok" }), liveBody);
         } else if (event === "tool_confirm") {
           live.insertBefore(toolChip({ label: data.label, status: "confirm", token: data.token }), liveBody);
         } else if (event === "sources") {

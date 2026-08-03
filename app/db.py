@@ -132,6 +132,13 @@ CREATE TABLE IF NOT EXISTS groups (
     name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
 );
+
+-- §17: настройки приложения, меняемые администратором из интерфейса
+-- (в отличие от .env — без перезапуска сервиса).
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 # Индексы для колонок, добавляемых миграциями (в SCHEMA их создать нельзя —
@@ -163,6 +170,8 @@ _COLUMN_MIGRATIONS = [
     # записей останется NULL, то есть видимость не сузится задним числом.
     ("notes", "group_id", "INTEGER"),
     ("events", "group_id", "INTEGER"),
+    # §17: пер-чатовый тумблер «Расчёты» (инструмент вычислений)
+    ("chats", "use_calc", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 DEFAULT_SPECIALIZATIONS = [

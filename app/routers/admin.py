@@ -8,6 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.appsettings import (
+    CALC_ACCESS,
+    CALC_ACCESS_VALUES,
+    get_setting,
+    set_setting,
+)
 from app.audit import utcnow_iso, write_audit
 from app.auth import client_ip, hash_password, require_admin, validate_password
 from app.db import get_db
@@ -297,6 +303,41 @@ async def set_user_group(
                               f"{updated['group_name'] or 'без группы'}",
                       ip=client_ip(request))
     return dict(updated)
+
+
+# ===== Расчёты (§17): кому доступен инструмент вычислений =====
+#
+# Держим в БД, а не в .env, чтобы открыть функцию на всех сотрудников или
+# аварийно её погасить можно было галочкой в интерфейсе — без выкатки новой
+# версии на закрытый контур.
+
+class CalcSettingsRequest(BaseModel):
+    access: str
+
+
+@router.get("/calc/settings")
+async def get_calc_settings(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    return {"access": await get_setting(db, CALC_ACCESS)}
+
+
+@router.put("/calc/settings")
+async def update_calc_settings(
+    payload: CalcSettingsRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    if payload.access not in CALC_ACCESS_VALUES:
+        raise HTTPException(status_code=400, detail="Недопустимый уровень доступа")
+    await set_setting(db, CALC_ACCESS, payload.access)
+    await db.commit()
+    await write_audit(db, user_id=admin["id"], action="calc_access_changed",
+                      object_type="setting", object_id=CALC_ACCESS,
+                      details=f"access={payload.access}", ip=client_ip(request))
+    return {"ok": True, "access": payload.access}
 
 
 # ===== Специализации (§15) =====

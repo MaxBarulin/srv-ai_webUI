@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 
 from app.audit import utcnow_iso, write_audit
+from app.calc import CalcError, run_steps
 from app.config import settings
 from app.db import get_connection
 from app.llm import APP_TZ, _WEEKDAYS_RU
@@ -233,6 +234,57 @@ def _check_iso(value: str, field: str) -> str:
 def _tags_to_str(tags: list[str]) -> str:
     cleaned = [t.strip() for t in tags if t.strip()]
     return ",".join(dict.fromkeys(cleaned))
+
+
+# ===== §17: инструмент расчётов =====
+#
+# Отдельным списком, а не внутри TOOLS_SPEC: инструмент выдаётся модели только
+# при включённом тумблере «Расчёты» и только тем, кому он разрешён настройкой.
+# Вся цепочка считается за ОДИН вызов: каждый круг через модель стоит секунды
+# в очереди, поэтому считать «в столбик» по вызову на действие недопустимо.
+
+CALC_TOOLS: list[dict] = [
+    _tool("calc_run",
+          "Точные вычисления. Обязателен для ЛЮБОЙ арифметики: складывать, "
+          "умножать и округлять в уме нельзя. Всю цепочку расчёта передавай "
+          "одним вызовом: шаги считаются по порядку, каждый следующий может "
+          "ссылаться на имена предыдущих.",
+          {
+              "steps": {
+                  "type": "array",
+                  "description": "Шаги расчёта по порядку",
+                  "items": {
+                      "type": "object",
+                      "properties": {
+                          "name": {"type": "string",
+                                   "description": "Имя величины: буквы, цифры, "
+                                                  "подчёркивание (можно кириллицей)"},
+                          "expr": {"type": "string",
+                                   "description": "Формула. Числа с точкой, не запятой. "
+                                                  "Доступны + - * / // % **, скобки, "
+                                                  "pi, e, sqrt, log, sin, cos, tan, abs, "
+                                                  "min, max, floor, ceil, round, "
+                                                  "round_half_up"},
+                          "unit": {"type": "string", "description": "Единица измерения"},
+                          "comment": {"type": "string", "description": "Что это за величина"},
+                      },
+                      "required": ["name", "expr"],
+                  },
+              },
+              "given": {
+                  "type": "object",
+                  "description": "Исходные числовые данные: имя величины → число",
+              },
+          }, ["steps"]),
+]
+
+# Подсказка в системный промпт: без неё модель считает сама и ошибается
+CALC_SYSTEM_HINT = (
+    "Для любых вычислений вызывай инструмент calc_run и бери числа только из "
+    "его ответа. Считать в уме или в тексте запрещено, даже простые действия. "
+    "Всю цепочку передавай одним вызовом. В ответе показывай ход расчёта: "
+    "формулу, значение и единицу по каждому шагу."
+)
 
 
 # --- Исполнение ---
@@ -509,6 +561,46 @@ async def _get_current_datetime(db, user, args):
     return result, "запрошены текущие дата и время", None, None
 
 
+async def _calc_run(db, user, args):
+    steps = args.get("steps")
+    given = args.get("given") or {}
+    if not isinstance(given, dict):
+        raise ToolError("Параметр given должен быть объектом «имя: число»")
+    numbers: dict[str, float] = {}
+    for key, value in given.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ToolError(f"Исходная величина «{key}» должна быть числом")
+        numbers[str(key)] = float(value)
+    try:
+        trace = run_steps(steps if isinstance(steps, list) else [], numbers)
+    except CalcError as exc:
+        raise ToolError(str(exc))
+    result = {
+        "steps": trace,
+        # Итог — значение последнего шага: модель не должна выводить его сама
+        "result": trace[-1]["value"],
+        "result_name": trace[-1]["name"],
+        "result_unit": trace[-1]["unit"],
+    }
+    last = trace[-1]
+    label = f"расчёт: {last['name']} = {_fmt_number(last['value'])}"
+    if last["unit"]:
+        label += f" {last['unit']}"
+    return result, label, "calc", None
+
+
+def _fmt_number(value: float) -> str:
+    """Число для подписи плашки: без хвоста нулей и с запятой как в трассе.
+
+    Разделитель именно запятая — русский инженерный текст, и в одной плашке
+    не должно быть двух разных разделителей.
+    """
+    if isinstance(value, int) or value == int(value):
+        if abs(value) < 1e15:
+            return str(int(value))
+    return f"{value:.6g}".replace(".", ",")
+
+
 _HANDLERS = {
     "notes_search": _notes_search,
     "notes_get": _notes_get,
@@ -520,6 +612,7 @@ _HANDLERS = {
     "calendar_update": _calendar_update,
     "calendar_delete": _calendar_delete,
     "get_current_datetime": _get_current_datetime,
+    "calc_run": _calc_run,
 }
 
 

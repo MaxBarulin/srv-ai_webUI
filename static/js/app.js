@@ -1,6 +1,6 @@
 // Каркас SPA: навигация по разделам, текущий пользователь, раздел «Администрирование».
 import { api } from "/static/js/api.js";
-import { initChat, setRagAvailable } from "/static/js/chat.js";
+import { initChat, setCalcAvailable, setRagAvailable } from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
 import { initCalendar } from "/static/js/calendar.js";
 
@@ -164,8 +164,31 @@ async function loadUsers() {
   }
   loadSpecs();
   loadExamplesAdmin();
+  loadCalcSettings();
   loadMetrics();
   loadAudit();
+}
+
+// --- Администрирование: инструмент расчётов (§17) ---
+
+async function loadCalcSettings() {
+  try {
+    const s = await api("/api/admin/calc/settings");
+    document.getElementById("calc-access").value = s.access || "admin";
+  } catch { /* необязательно: панель просто останется со значением по умолчанию */ }
+}
+
+async function saveCalcSettings() {
+  const access = document.getElementById("calc-access").value;
+  try {
+    await api("/api/admin/calc/settings", { method: "PUT", body: { access } });
+    toast("Доступ к расчётам сохранён");
+    // Своя видимость тумблера могла измениться — перечитываем профиль
+    const me = await api("/api/me");
+    setCalcAvailable(Boolean(me.calc_enabled));
+  } catch (e) {
+    toast(e.detail || "Не удалось сохранить настройку", true);
+  }
 }
 
 // --- Администрирование: вкладки ---
@@ -743,6 +766,7 @@ async function init() {
   document.getElementById("spec-add-btn").addEventListener("click", () =>
     saveSpec(null, { name: "Новая специализация", system_prompt: "", is_active: true, sort_order: 0 }));
   document.getElementById("examples-save-btn").addEventListener("click", saveExamples);
+  document.getElementById("calc-access-save").addEventListener("click", saveCalcSettings);
   document.getElementById("feedback-export-btn").addEventListener("click", exportFeedback);
   document.getElementById("audit-refresh").addEventListener("click", () => { auditOffset = 0; loadAudit(); });
   document.getElementById("audit-action").addEventListener("change", () => { auditOffset = 0; loadAudit(); });
@@ -754,6 +778,7 @@ async function init() {
   });
   initChat(toast, announce);
   setRagAvailable(Boolean(currentUser.rag_enabled));
+  setCalcAvailable(Boolean(currentUser.calc_enabled));
   initNotes(toast, currentUser);
   initCalendar(toast, currentUser);
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));
