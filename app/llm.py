@@ -121,6 +121,30 @@ def _reset_server_ctx_cache_for_tests() -> None:
     _server_ctx_probed = False
 
 
+# Поля, в которых провайдеры отдают размышления модели. Порядок важен:
+# reasoning_content — формат deepseek, его шлёт наш llama.cpp, он и остаётся
+# главным. Остальные читаются, только когда основного в дельте нет, поэтому
+# путь к своему серверу эта поддержка задеть не может.
+_REASONING_KEYS = ("reasoning_content", "reasoning", "thinking")
+
+
+def _extract_reasoning(delta: dict) -> str | None:
+    """Текст размышлений из дельты, в каком бы поле провайдер его ни прислал.
+
+    Значение может прийти не строкой, а объектом вида {"content": "..."} —
+    отдать наружу такое нельзя: дальше текст склеивается, и словарь уронил бы
+    генерацию посреди ответа. Поэтому берём только то, что удалось привести
+    к непустой строке.
+    """
+    for key in _REASONING_KEYS:
+        value = delta.get(key)
+        if isinstance(value, dict):
+            value = value.get("content") or value.get("text")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
     """Собрать стриминговые дельты tool_calls (OpenAI формат) по индексам."""
     for tc in deltas:
@@ -195,7 +219,7 @@ async def stream_chat(
                     if not choices:
                         continue
                     delta = choices[0].get("delta") or {}
-                    reasoning = delta.get("reasoning_content")
+                    reasoning = _extract_reasoning(delta)
                     if reasoning:
                         yield "reasoning", reasoning
                     content = delta.get("content")
