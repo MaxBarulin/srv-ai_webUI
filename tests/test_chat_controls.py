@@ -156,6 +156,47 @@ def test_continue_requires_assistant_message(client, ctrl_user):
     assert client.post(f"/api/chats/{chat_id}/continue").status_code == 400
 
 
+def test_empty_answer_is_explained_not_silent(client, ctrl_user):
+    """Ход без единой буквы ответа: вместо пустоты — объяснение с подсказкой."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    events = _send(client, chat_id, "NO_ANSWER посчитай")
+
+    assert [d["text"] for e, d in events if e == "content"] == []
+    errors = [d["detail"] for e, d in events if e == "error"]
+    assert len(errors) == 1
+    assert "не выдав текста" in errors[0]
+    assert "Продолжить" in errors[0]
+
+
+def test_truncated_answer_names_the_token_limit(client, ctrl_user):
+    """finish_reason=length — говорим про обрыв, а не про молчание модели."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    events = _send(client, chat_id, "NO_ANSWER_CUT посчитай")
+
+    errors = [d["detail"] for e, d in events if e == "error"]
+    assert len(errors) == 1
+    assert "оборван" in errors[0] and "лимиту токенов" in errors[0]
+
+
+def test_continue_works_on_empty_answer(client, ctrl_user):
+    """Регресс: раньше «Продолжить» отвечало 400 ровно там, где нужнее всего —
+    при пустом ответе. Продолжаем по размышлению, дописывая то же сообщение."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    _send(client, chat_id, "NO_ANSWER посчитай")
+    before = client.get(f"/api/chats/{chat_id}/messages").json()
+    empty = [m for m in before if m["role"] == "assistant"][-1]
+    assert empty["content"] == "" and empty["reasoning"]
+
+    r = client.post(f"/api/chats/{chat_id}/continue")
+    assert r.status_code == 200
+    added = "".join(d["text"] for e, d in _parse_sse(r.text) if e == "content")
+    assert added.strip()
+
+    after = client.get(f"/api/chats/{chat_id}/messages").json()
+    assert [m for m in after if m["id"] == empty["id"]][0]["content"] == added
+    assert len(after) == len(before)  # новых сообщений не появилось
+
+
 def test_continue_foreign_chat_404(client, make_user, ctrl_user):
     chat_id = client.post("/api/chats", json={}).json()["id"]
     _send(client, chat_id, "привет")

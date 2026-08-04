@@ -124,6 +124,12 @@ async def chat_completions(request: Request):
             for i in range(0, len(block), 15):
                 yield chunk({"content": block[i:i + 15]})
                 await asyncio.sleep(0.01)
+        elif "NO_ANSWER" in last_user:
+            # Ход кончается без единого символа ответа — только размышление.
+            # CUT: сервер сообщает, что оборвал генерацию по лимиту токенов.
+            if "NO_ANSWER_CUT" in last_user:
+                yield "data: " + json.dumps(
+                    {"choices": [{"delta": {}, "finish_reason": "length"}]}) + "\n\n"
         else:
             if has_tool_result:
                 last_tool = next(

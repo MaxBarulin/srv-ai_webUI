@@ -167,6 +167,9 @@ async def stream_chat(
     """Yield ("reasoning" | "content", delta_text) from a streaming completion.
 
     В конце дополнительно отдаются:
+    - ("finish", причина) — почему сервер остановил генерацию: "stop" (модель
+      закончила сама), "length" (упёрлись в лимит токенов) и т.п. Без этого
+      оборванный ответ неотличим от законченного;
     - ("tool_calls", JSON-список в формате OpenAI) — если модель вызвала инструменты;
     - ("stats", JSON) — счётчики сервера: prompt_tokens, completion_tokens,
       tokens_per_second (llama.cpp отдаёт timings с реальной скоростью —
@@ -186,6 +189,7 @@ async def stream_chat(
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     tool_calls: dict[int, dict] = {}
     stats: dict = {}
+    finish_reason = ""
     try:
         async with make_client() as client:
             async with client.stream("POST", "/chat/completions", json=payload) as response:
@@ -218,6 +222,8 @@ async def stream_chat(
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
+                    if choices[0].get("finish_reason"):
+                        finish_reason = str(choices[0]["finish_reason"])
                     delta = choices[0].get("delta") or {}
                     reasoning = _extract_reasoning(delta)
                     if reasoning:
@@ -229,6 +235,8 @@ async def stream_chat(
                         _merge_tool_call_delta(tool_calls, delta["tool_calls"])
     except httpx.HTTPError as exc:
         raise LLMError(f"LLM недоступен: {exc}") from exc
+    if finish_reason:
+        yield "finish", finish_reason
     if tool_calls:
         calls = [tool_calls[i] for i in sorted(tool_calls)]
         calls = [c for c in calls if c["function"]["name"]]

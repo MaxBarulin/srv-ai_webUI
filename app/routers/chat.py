@@ -566,6 +566,7 @@ async def send_message(
         finished = False
         had_error = False
         gen_start = None
+        finish_reason = ""      # почему сервер оборвал последнюю итерацию
         msgs = list(llm_messages)
         # Счётчики сервера (llama.cpp usage/timings). total_completion —
         # для скорости и метрик (сумма реально сгенерированных токенов за все
@@ -634,6 +635,8 @@ async def send_message(
                             yield _sse("content", {"text": text})
                     elif kind == "tool_calls":
                         tool_calls = json.loads(text)
+                    elif kind == "finish":
+                        finish_reason = text
                     elif kind == "stats":
                         step_stats = json.loads(text)
                         server_stats_seen = True
@@ -674,6 +677,20 @@ async def send_message(
                 yield _sse("error", {"detail": "Достигнут лимит вызовов инструментов "
                                                f"({MAX_TOOL_ITERATIONS}) — ответ прерван"})
                 finished = True
+                had_error = True
+
+            # Ход закончился, а текста нет. Раньше пользователь видел просто
+            # пустоту: плашки, размышления — и ничего. Говорим прямо, что
+            # случилось, и подсказываем кнопку, которая это чинит.
+            if finished and not had_error and not "".join(content_parts).strip():
+                if finish_reason == "length":
+                    detail = ("Ответ оборван: сервер остановил генерацию по лимиту токенов. "
+                              "Нажмите «Продолжить», чтобы дописать.")
+                else:
+                    detail = ("Модель завершила ход, не выдав текста ответа. Размышления и "
+                              "результаты инструментов сохранены — нажмите «Продолжить», "
+                              "чтобы получить ответ по ним.")
+                yield _sse("error", {"detail": detail})
                 had_error = True
         except LLMError as exc:
             yield _sse("error", {"detail": str(exc)})
@@ -745,6 +762,16 @@ CONTINUE_INSTRUCTION = (
     "Не повторяй уже написанное и не добавляй вступлений — просто продолжай текст."
 )
 
+# Тот же «Продолжить», но продолжать нечего: ход кончился без единой буквы
+# ответа. Просим написать его по уже собранным данным — повторять расчёты
+# и поиск нельзя, они стоили полного круга через модель.
+ANSWER_INSTRUCTION = (
+    "Твой предыдущий ход закончился без ответа: текста нет. Данные уже собраны "
+    "выше — результаты расчётов и найденные материалы. Изложи ответ сейчас, "
+    "опираясь на них. Не выполняй расчёты заново и не пересчитывай уже "
+    "полученные числа."
+)
+
 
 async def _append_to_message(message_id: int, chat_id: int, extra: str,
                              stats: dict | None = None) -> None:
@@ -773,12 +800,19 @@ async def continue_generation(
     """
     chat = await _get_own_chat(db, chat_id, user["id"])
     cursor = await db.execute(
-        "SELECT id, role, content FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1",
-        (chat_id,))
+        "SELECT id, role, content, reasoning, tool_calls_json FROM messages "
+        "WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (chat_id,))
     last = await cursor.fetchone()
-    if last is None or last["role"] != "assistant" or not last["content"].strip():
+    # Пустой ответ — не повод отказывать: это ровно тот случай, ради которого
+    # кнопка и нужна. Продолжать есть от чего, если модель успела подумать или
+    # выполнить инструменты — иначе переспрашивать нечем, и это честный отказ.
+    has_material = bool((last["reasoning"] or "").strip() or last["tool_calls_json"]) \
+        if last is not None else False
+    if last is None or last["role"] != "assistant" \
+            or (not last["content"].strip() and not has_material):
         raise HTTPException(status_code=400,
                             detail="Продолжать нечего: последний ответ отсутствует или пуст")
+    instruction = CONTINUE_INSTRUCTION if last["content"].strip() else ANSWER_INSTRUCTION
     message_id = last["id"]
 
     spec_prompt = await _chat_spec_prompt(db, chat)
@@ -786,7 +820,7 @@ async def continue_generation(
     llm_messages = [
         {"role": "system", "content": build_system_prompt(user["display_name"], spec_prompt)},
         *history,  # история уже заканчивается продолжаемым ответом ассистента
-        {"role": "user", "content": CONTINUE_INSTRUCTION},
+        {"role": "user", "content": instruction},
     ]
 
     async def event_stream():
