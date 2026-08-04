@@ -1040,13 +1040,20 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 
-/* Живой ответ: мигающий курсор у последней строки генерации */
-.msg.streaming .msg-body::after {
+/* Живой ответ: мигающий курсор ровно за последним напечатанным символом.
+   ::after вешаем на последний блок, а не на всё тело: у тела он оказывался
+   ПОД абзацем, отдельной строкой, а не там, где печатает модель.
+   У списка курсор рисует последний пункт — сам список его гасит. */
+.msg.streaming .msg-body > :last-child::after,
+.msg.streaming .msg-body > ul:last-child > li:last-child::after,
+.msg.streaming .msg-body > ol:last-child > li:last-child::after {
   content: "▍";
   color: var(--osk-red);
   margin-left: 2px;
   animation: cursor-blink 1s steps(2, start) infinite;
 }
+.msg.streaming .msg-body > ul:last-child::after,
+.msg.streaming .msg-body > ol:last-child::after { content: none; }
 @keyframes cursor-blink { to { visibility: hidden; } }
 /* Пустое тело (фаза размышлений) — спиннер вместо курсора */
 .msg.streaming .msg-body:empty::after {

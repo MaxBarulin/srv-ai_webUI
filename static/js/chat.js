@@ -904,7 +904,11 @@ function updateLiveStats(st) {
   const toks = Math.max(1, Math.round(chars / 4));
   const genSecs = (performance.now() - st.genStart) / 1000;
   const tps = genSecs > 0 ? toks / genSecs : 0;
-  st.liveStats.textContent = `~${toks} ток · ${tps.toFixed(1)} ток/с · ${fmtSeconds(wall)}`;
+  // Фаза словом: «размышляет» и «печатает» выглядели одинаково, а между ними
+  // могут пройти минуты — по одним цифрам не понять, ждать ещё или уже всё.
+  const phase = st.contentText ? "печатает" : "размышляет";
+  st.liveStats.textContent =
+    `${phase} · ~${toks} ток · ${tps.toFixed(1)} ток/с · ${fmtSeconds(wall)}`;
 }
 
 // Снять индикаторы стрима с живого контейнера (конец генерации/ошибка)
