@@ -124,6 +124,19 @@ async def chat_completions(request: Request):
             for i in range(0, len(block), 15):
                 yield chunk({"content": block[i:i + 15]})
                 await asyncio.sleep(0.01)
+        elif "XML_IN_THINK" in last_user and body.get("tools") and not has_tool_result:
+            # Прецедент: модель выписала вызов текстом ВНУТРИ размышления,
+            # в XML-диалекте — сервер его вызовом не признал. Ни content,
+            # ни tool_calls до приложения не доходит.
+            yield chunk({"reasoning_content":
+                         "Drafting the Tool Call: <tool_call> <function=notes_get> "
+                         "<parameter=id> 1 </parameter> </function> </tool_call>"})
+        elif "TAGGED_JSON_CALL" in last_user and body.get("tools") and not has_tool_result:
+            # Тот же вызов, но JSON внутри тегов и в обычном тексте ответа
+            block = '<tool_call>\n{"name": "notes_get", "arguments": {"id": 1}}\n</tool_call>'
+            for i in range(0, len(block), 15):
+                yield chunk({"content": block[i:i + 15]})
+                await asyncio.sleep(0.01)
         elif "NO_ANSWER" in last_user:
             # Ход кончается без единого символа ответа — только размышление.
             # CUT: сервер сообщает, что оборвал генерацию по лимиту токенов.

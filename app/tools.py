@@ -741,17 +741,69 @@ _HANDLERS = {
 }
 
 
-# --- Fallback: JSON-блок вместо структурных tool_calls (§7) ---
+# --- Fallback: вызов текстом вместо структурных tool_calls (§7) ---
+#
+# Сервер не всегда распознаёт вызов: старые сборки llama.cpp не разбирали
+# JSON-блок, а Qwen3 временами выписывает вызов в своём XML-диалекте или
+# вовсе внутри блока размышлений — тогда до нас доходит пустой ход.
+# Здесь разбираем все три формы, чтобы такой ход не пропадал зря.
 
 _FALLBACK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})", re.DOTALL)
+_TOOL_CALL_BLOCK = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_XML_FUNCTION = re.compile(r"<function=([\w.-]+)\s*>(.*?)(?:</function>|$)", re.DOTALL)
+_XML_PARAMETER = re.compile(r"<parameter=([\w.-]+)\s*>(.*?)(?:</parameter>|$)", re.DOTALL)
+
+
+def _coerce_arg(raw: str):
+    """Значение XML-параметра — всегда строка; числа и флаги приводим к типу."""
+    text = raw.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+def _call_from_mapping(data: object) -> dict | None:
+    if not isinstance(data, dict):
+        return None
+    name = data.get("name") or data.get("tool")
+    args = data.get("arguments") or data.get("parameters") or {}
+    if not isinstance(name, str) or name not in _HANDLERS or not isinstance(args, dict):
+        return None
+    return {
+        "id": f"fallback_{secrets.token_hex(4)}",
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)},
+    }
+
+
+def _call_from_block(body: str) -> dict | None:
+    """Содержимое <tool_call>…</tool_call>: либо JSON, либо <function=…>."""
+    text = body.strip()
+    if text.startswith("{"):
+        try:
+            return _call_from_mapping(json.loads(text))
+        except json.JSONDecodeError:
+            return None
+    match = _XML_FUNCTION.search(text)
+    if not match:
+        return None
+    args = {key: _coerce_arg(value)
+            for key, value in _XML_PARAMETER.findall(match.group(2))}
+    return _call_from_mapping({"name": match.group(1), "arguments": args})
 
 
 def parse_fallback_tool_calls(text: str) -> list[dict] | None:
-    """Достать вызов инструмента из текста ответа (устойчивость к старым сборкам llama.cpp).
+    """Достать вызов инструмента из текста ответа.
 
     Возвращает список в формате OpenAI tool_calls или None.
     """
-    match = _FALLBACK_RE.search(text.strip())
+    stripped = text.strip()
+    block = _TOOL_CALL_BLOCK.search(stripped)
+    if block:
+        call = _call_from_block(block.group(1))
+        return [call] if call else None
+    match = _FALLBACK_RE.search(stripped)
     if not match:
         return None
     raw = match.group(1) or match.group(2)
@@ -759,14 +811,31 @@ def parse_fallback_tool_calls(text: str) -> list[dict] | None:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
-    if not isinstance(data, dict):
-        return None
-    name = data.get("name") or data.get("tool")
-    args = data.get("arguments") or data.get("parameters") or {}
-    if not isinstance(name, str) or name not in _HANDLERS or not isinstance(args, dict):
-        return None
-    return [{
-        "id": f"fallback_{secrets.token_hex(4)}",
-        "type": "function",
-        "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)},
-    }]
+    call = _call_from_mapping(data)
+    return [call] if call else None
+
+
+# Из размышления воскрешаем только читающие инструменты. Размышление часто
+# пересказывает содержимое заметок, а общую заметку пишет кто угодно: строка
+# <tool_call> в чужом тексте не должна оборачиваться записью в чужой календарь.
+# Чтение же ограничено правами самого пользователя (visible_sql), утечь нечему.
+_READ_ONLY_TOOLS = frozenset({
+    "notes_search", "notes_get", "calendar_list", "get_current_datetime",
+    "calc_run", "calc_method",
+})
+
+
+def parse_reasoning_tool_call(reasoning: str) -> list[dict] | None:
+    """Последняя надежда: ход кончился совсем пустым — ни текста, ни вызова.
+
+    Модель бывает выписывает вызов текстом прямо в размышлении («drafting the
+    tool call»), и тогда сервер его не видит: пользователь получает пустоту, а
+    заметка так и не прочитана. Берём ПОСЛЕДНИЙ блок: предыдущие — черновики,
+    которые модель сама же переписала. Срабатывает только на мёртвом ходу,
+    поэтому терять нечего, и только для читающих инструментов.
+    """
+    for body in reversed(_TOOL_CALL_BLOCK.findall(reasoning)):
+        call = _call_from_block(body)
+        if call and call["function"]["name"] in _READ_ONLY_TOOLS:
+            return [call]
+    return None

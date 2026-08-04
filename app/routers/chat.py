@@ -34,6 +34,7 @@ from app.tools import (
     execute_tool,
     is_destructive,
     parse_fallback_tool_calls,
+    parse_reasoning_tool_call,
     preview_destructive,
     register_pending,
 )
@@ -508,9 +509,11 @@ async def send_message(
     tools = tools or None
 
     def _may_be_tool_json(text: str) -> bool:
-        # Пока накопленный контент похож на начало JSON-вызова (fallback §7) — придерживаем
+        # Пока накопленный контент похож на начало вызова текстом (fallback §7) —
+        # придерживаем. Кроме JSON, модель пишет вызов и в тегах <tool_call>.
         return (not text or text.startswith("{")
-                or text.startswith("```json") or "```json".startswith(text))
+                or text.startswith("```json") or "```json".startswith(text)
+                or text.startswith("<tool_call>") or "<tool_call>".startswith(text))
 
     async def run_tool_call(tc: dict):
         """Исполнить один вызов инструмента. Возвращает (результат для модели, SSE-событие)."""
@@ -615,6 +618,7 @@ async def send_message(
 
             for _ in range(MAX_TOOL_ITERATIONS):
                 step_parts: list[str] = []
+                step_reasoning: list[str] = []   # размышление этого круга — для спасения
                 held: list[str] = []      # придержанный контент (возможный fallback-JSON)
                 holding = tools is not None
                 tool_calls = None
@@ -622,6 +626,7 @@ async def send_message(
                         msgs, tools=tools, enable_thinking=payload.enable_thinking):
                     if kind == "reasoning":
                         reasoning_parts.append(text)
+                        step_reasoning.append(text)
                         yield _sse("reasoning", {"text": text})
                     elif kind == "content":
                         step_parts.append(text)
@@ -653,6 +658,14 @@ async def send_message(
                 if tool_calls is None and holding and step_text.strip():
                     tool_calls = parse_fallback_tool_calls(step_text)
                     fallback_used = tool_calls is not None
+                if tools and tool_calls is None and not step_text.strip():
+                    # Круг вышел пустым: ни текста, ни вызова. Модель могла
+                    # выписать вызов текстом в размышлении — достаём оттуда,
+                    # иначе весь ход (и заметка, и расчёт) пропадёт зря.
+                    # Только при включённых инструментах: выключил тумблер —
+                    # значит ничего исполнять нельзя, что бы модель ни писала.
+                    tool_calls = parse_reasoning_tool_call("".join(step_reasoning))
+                    fallback_used = fallback_used or tool_calls is not None
 
                 if tool_calls is None:
                     if held:  # буфер так и не оказался вызовом инструмента
