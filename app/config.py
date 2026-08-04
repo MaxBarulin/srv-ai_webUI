@@ -57,6 +57,7 @@ class Settings:
     rag_mode: str
     session_ttl_hours: int
     tools_confirm_destructive: bool
+    preserve_thinking: bool
     system_prompt_file: str
     max_upload_mb: int
     max_body_mb: int
@@ -89,6 +90,7 @@ def load_settings() -> Settings:
         rag_mode=_get("RAG_MODE", "hybrid"),
         session_ttl_hours=_get_int("SESSION_TTL_HOURS", 12),
         tools_confirm_destructive=_get_bool("TOOLS_CONFIRM_DESTRUCTIVE", True),
+        preserve_thinking=_get_bool("PRESERVE_THINKING", True),
         system_prompt_file=_get("SYSTEM_PROMPT_FILE", "./system_prompt.txt"),
         max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),
         max_body_mb=_get_int("MAX_BODY_MB", 64),

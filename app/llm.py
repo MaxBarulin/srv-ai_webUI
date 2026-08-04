@@ -162,7 +162,7 @@ def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
 
 async def stream_chat(
     messages: list[dict], tools: list[dict] | None = None,
-    enable_thinking: bool = True,
+    enable_thinking: bool = True, preserve_thinking: bool = False,
 ) -> AsyncIterator[tuple[str, str]]:
     """Yield ("reasoning" | "content", delta_text) from a streaming completion.
 
@@ -184,9 +184,14 @@ async def stream_chat(
     }
     if tools:
         payload["tools"] = tools
+    # Qwen3 + llama.cpp (--jinja): и выключение thinking, и перенос прошлых
+    # размышлений задаются через параметры шаблона чата, а не флагами сервера —
+    # так режим можно менять на лету, не перезапуская llama.cpp.
     if not enable_thinking:
-        # Qwen3 + llama.cpp (--jinja): выключение thinking через шаблон чата
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+    elif preserve_thinking:
+        # Шаблон отрисует <think> из reasoning_content прошлых ответов
+        payload["chat_template_kwargs"] = {"preserve_thinking": True}
     tool_calls: dict[int, dict] = {}
     stats: dict = {}
     finish_reason = ""

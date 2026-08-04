@@ -1,6 +1,7 @@
 """Статистика генерации (usage/timings сервера), «Продолжить», удаление сообщения."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import replace
 
@@ -11,6 +12,7 @@ from app import llm as llm_module
 from app.config import settings
 from app.metrics import Metrics
 from tests.conftest import login_as
+from tests.mock_llm import REASONING_CHUNKS
 from tests.mock_llm import app as mock_llm_app
 from tests.test_chat import _parse_sse
 
@@ -127,6 +129,60 @@ def test_metrics_use_server_speed(client, ctrl_user, monkeypatch):
     # Скорость взята из timings сервера (18.5), а не из грубой оценки по символам
     assert snap["avg_tokens_per_sec"] == 18.5
     assert snap["requests_total"] == 1
+
+
+# --- Перенос размышлений в следующий ход (preserve_thinking) ---
+
+def _echo(client, chat_id: int) -> dict:
+    """Что сервер LLM реально получил: параметры шаблона и размышления истории."""
+    events = _send(client, chat_id, "ECHO_REQUEST")
+    return json.loads("".join(d["text"] for e, d in events if e == "content"))
+
+
+def test_last_turn_reasoning_goes_back_to_model(client, ctrl_user):
+    """Qwen3.6 дообучена опираться на свои прошлые рассуждения: размышление
+    последнего ответа возвращаем ей вместе с флагом preserve_thinking."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    _send(client, chat_id, "первый вопрос")
+
+    echo = _echo(client, chat_id)
+    assert echo["chat_template_kwargs"] == {"preserve_thinking": True}
+    assert echo["reasoning_in_history"][-1]["reasoning"] == "".join(REASONING_CHUNKS)
+
+
+def test_only_the_last_turn_keeps_reasoning(client, ctrl_user):
+    """Размышления бывают по 20 тысяч знаков — тащить их за всю переписку
+    нельзя. У всех ответов, кроме последнего, размышление снимается."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    for _ in range(3):
+        _send(client, chat_id, "вопрос")
+
+    history = _echo(client, chat_id)["reasoning_in_history"]
+    assert len(history) >= 3
+    assert history[-1]["reasoning"]                       # последнему — оставили
+    assert all(m["reasoning"] is None for m in history[:-1])   # прошлым — сняли
+
+
+def test_preserve_thinking_can_be_switched_off(client, ctrl_user, monkeypatch):
+    """Рубильник в .env: размышления не уходят модели вовсе (прежнее поведение)."""
+    off = replace(settings, preserve_thinking=False)
+    monkeypatch.setattr("app.routers.chat.settings", off)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    _send(client, chat_id, "вопрос")
+
+    echo = _echo(client, chat_id)
+    assert echo["chat_template_kwargs"] is None
+    assert all(m["reasoning"] is None for m in echo["reasoning_in_history"])
+
+
+def test_thinking_off_wins_over_preserve(client, ctrl_user):
+    """Выключенные размышления важнее переноса: шлём enable_thinking=false."""
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages",
+                    json={"content": "ECHO_REQUEST", "use_tools": False,
+                          "enable_thinking": False})
+    echo = json.loads("".join(d["text"] for e, d in _parse_sse(r.text) if e == "content"))
+    assert echo["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 # --- «Продолжить генерацию» ---

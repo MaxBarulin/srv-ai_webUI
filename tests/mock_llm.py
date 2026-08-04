@@ -124,6 +124,15 @@ async def chat_completions(request: Request):
             for i in range(0, len(block), 15):
                 yield chunk({"content": block[i:i + 15]})
                 await asyncio.sleep(0.01)
+        elif "ECHO_REQUEST" in last_user:
+            # Отдать обратно то, что сервер реально получил: параметры шаблона
+            # и размышления в истории — иначе проверить нечем
+            yield chunk({"content": json.dumps({
+                "chat_template_kwargs": body.get("chat_template_kwargs"),
+                "reasoning_in_history": [
+                    {"role": m.get("role"), "reasoning": m.get("reasoning_content")}
+                    for m in messages if m.get("role") == "assistant"],
+            }, ensure_ascii=False)})
         elif "XML_IN_THINK" in last_user and body.get("tools") and not has_tool_result:
             # Прецедент: модель выписала вызов текстом ВНУТРИ размышления,
             # в XML-диалекте — сервер его вызовом не признал. Ни content,

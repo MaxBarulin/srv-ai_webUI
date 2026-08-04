@@ -337,11 +337,17 @@ def _sse(event: str, data: dict) -> str:
 
 
 async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
-    """История для LLM: без reasoning (§4 ТЗ); текст документов из вложений
-    восстанавливается в сообщение (контекст сохраняется); пустые — пропускаются."""
+    """История для LLM: текст документов из вложений восстанавливается в
+    сообщение (контекст сохраняется); пустые — пропускаются.
+
+    Размышление возвращается модели только за ПОСЛЕДНИЙ ход (preserve_thinking,
+    §4 в редакции заказчика от 04.08.2026). Qwen3.6 дообучена опираться на свои
+    прошлые рассуждения: так она не передумывает заново. Тащить всю переписку
+    нельзя — размышления бывают по 20 тысяч знаков, это тысячи токенов на ход.
+    """
     cursor = await db.execute(
-        "SELECT role, content, tool_calls_json FROM messages WHERE chat_id = ? ORDER BY id",
-        (chat_id,),
+        "SELECT role, content, reasoning, tool_calls_json FROM messages "
+        "WHERE chat_id = ? ORDER BY id", (chat_id,),
     )
     history = []
     for row in await cursor.fetchall():
@@ -369,7 +375,17 @@ async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
                         if block:
                             text = f"{block}\n\n{text}" if text.strip() else block
         if text.strip():
-            history.append({"role": row["role"], "content": text})
+            entry = {"role": row["role"], "content": text}
+            if row["role"] == "assistant" and (row["reasoning"] or "").strip():
+                entry["reasoning_content"] = row["reasoning"]
+            history.append(entry)
+    # Размышление оставляем только у последнего ответа: у остальных снимаем,
+    # иначе каждый ход диалога тащил бы за собой тысячи токенов чужих дум.
+    last_assistant = next((i for i in range(len(history) - 1, -1, -1)
+                           if history[i]["role"] == "assistant"), None)
+    for index, entry in enumerate(history):
+        if index != last_assistant or not settings.preserve_thinking:
+            entry.pop("reasoning_content", None)
     return history
 
 
@@ -623,7 +639,8 @@ async def send_message(
                 holding = tools is not None
                 tool_calls = None
                 async for kind, text in stream_chat(
-                        msgs, tools=tools, enable_thinking=payload.enable_thinking):
+                        msgs, tools=tools, enable_thinking=payload.enable_thinking,
+                        preserve_thinking=settings.preserve_thinking):
                     if kind == "reasoning":
                         reasoning_parts.append(text)
                         step_reasoning.append(text)
@@ -858,7 +875,8 @@ async def continue_generation(
             yield _sse("queue_ready", {})
             gen_start = time.monotonic()
 
-            async for kind, text in stream_chat(llm_messages):
+            async for kind, text in stream_chat(
+                    llm_messages, preserve_thinking=settings.preserve_thinking):
                 if kind == "reasoning":
                     yield _sse("reasoning", {"text": text})
                 elif kind == "content":
