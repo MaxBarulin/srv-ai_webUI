@@ -597,6 +597,11 @@ async def send_message(
         total_gen_seconds = 0.0
         last_prompt_tokens = 0
         last_completion_tokens = 0
+        # prompt ПЕРВОЙ итерации — это и есть объём переписки: системный промпт,
+        # схемы инструментов, вся история и новый вопрос. Дальше по кругам он
+        # разбухает от промежуточных вызовов, которые в историю не попадут,
+        # поэтому «сколько занимает чат» надо считать именно отсюда.
+        first_prompt_tokens = 0
         server_stats_seen = False
         ticket = llm_queue.enqueue()
         try:
@@ -666,6 +671,8 @@ async def send_message(
                         total_completion += completion
                         last_completion_tokens = completion
                         last_prompt_tokens = step_stats.get("prompt_tokens", last_prompt_tokens)
+                        if not first_prompt_tokens:
+                            first_prompt_tokens = last_prompt_tokens
                         tps = step_stats.get("tokens_per_second", 0)
                         if completion and tps:
                             total_gen_seconds += completion / tps
@@ -765,6 +772,12 @@ async def send_message(
                 # /props сервера — только запасной вариант, если .env не задан.
                 context_size = (settings.llm_context_size
                                 or await get_server_context_size())
+                # Объём самой переписки: сколько ушло в модель на первом круге
+                # (промпт + инструменты + история + вопрос) плюс сам ответ,
+                # который в историю и попадёт. Промежуточные круги сюда не
+                # входят намеренно — в следующем запросе их не будет.
+                chat_tokens = (first_prompt_tokens + last_completion_tokens
+                               if first_prompt_tokens else 0)
                 stats_payload = {
                     "completion_tokens": total_completion,
                     "tokens_per_second": round(total_completion / total_gen_seconds, 1)
@@ -774,6 +787,9 @@ async def send_message(
                     "context_size": context_size,
                     "context_percent": round(context_used / context_size * 100)
                     if context_size else None,
+                    "chat_tokens": chat_tokens,
+                    "chat_percent": round(chat_tokens / context_size * 100)
+                    if context_size and chat_tokens else None,
                 }
             saved_id = None
             if content_parts or reasoning_parts or tool_activity:

@@ -131,6 +131,42 @@ def test_metrics_use_server_speed(client, ctrl_user, monkeypatch):
     assert snap["requests_total"] == 1
 
 
+# --- Объём переписки (сколько контекста занимает сам чат) ---
+
+def test_chat_tokens_measure_the_conversation_not_the_peak(client, ctrl_user):
+    """«Сколько занимает чат» и «пик заполнения контекста» — разные числа.
+
+    Промежуточные круги агентного цикла раздувают промпт вызовами и
+    результатами инструментов, но в историю они не попадают: в следующем
+    запросе их не будет. Поэтому объём чата считается по промпту ПЕРВОГО
+    круга, а не последнего.
+    """
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages",
+                    json={"content": "TOOL_CREATE_NOTE BIG_PROMPT создай заметку",
+                          "use_tools": True})
+    stats = [d for e, d in _parse_sse(r.text) if e == "stats"][0]
+
+    # Круг 1 — промпт 100, круг 2 (уже с результатом инструмента) — 600
+    assert stats["context_used"] == 625      # пик: 600 + 25
+    assert stats["chat_tokens"] == 125       # переписка: 100 + 25
+    assert stats["chat_tokens"] < stats["context_used"]
+
+
+def test_chat_tokens_percent_and_persistence(client, ctrl_user, monkeypatch):
+    """Процент считается от выбранного лимита и переживает перечитывание."""
+    monkeypatch.setattr("app.routers.chat.settings",
+                        replace(settings, llm_context_size=500))
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    _send(client, chat_id, "привет")
+
+    saved = [m for m in client.get(f"/api/chats/{chat_id}/messages").json()
+             if m["role"] == "assistant"][-1]
+    assert saved["stats"]["chat_tokens"] == 125
+    assert saved["stats"]["chat_percent"] == 25          # 125 из 500
+    assert saved["stats"]["context_size"] == 500
+
+
 # --- Перенос размышлений в следующий ход (preserve_thinking) ---
 
 def _echo(client, chat_id: int) -> dict:

@@ -1155,12 +1155,23 @@ table.users select.group-select { width: 100%; min-width: 140px; }
   padding: 0;
 }
 .attach-remove:hover { color: var(--osk-red); }
-.chat-disclaimer {
+.chat-footnote {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
   padding: 4px 28px 8px;
   font-size: 11.5px;
   color: var(--osk-slate);
   text-align: center;
 }
+.chat-disclaimer { flex: 0 1 auto; }
+/* Заполнение контекста чатом: спокойное, пока места вдоволь, и заметное,
+   когда пора начинать новый чат. */
+.chat-usage { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-usage.warn { color: var(--osk-red-dark); font-weight: 600; }
+:root[data-theme="dark"] .chat-usage.warn { color: var(--osk-red); }
 
 /* ===== Заметки ===== */
 .notes-layout {

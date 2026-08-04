@@ -68,6 +68,7 @@ export function initChat(toast, announce) {
   els.sendBtn = $("chat-send-btn");
   els.stopBtn = $("chat-stop-btn");
   els.empty = $("chat-empty");
+  els.usage = $("chat-usage");
   els.options = $("chat-options");
   els.optionsBtn = $("chat-options-btn");
   els.resizeHandle = $("chat-resize-handle");
@@ -489,6 +490,7 @@ async function createChat() {
   const chat = await api("/api/chats", { method: "POST", body: {} });
   activeChatId = chat.id;
   els.messages.replaceChildren(); // новый чат пуст — убрать сообщения предыдущего
+  renderUsage([]);                // и счётчик расхода прежнего чата вместе с ними
   messagesFollow = true;          // сброс sticky для нового пустого чата
   await refreshChats();
   els.input.focus();
@@ -640,7 +642,10 @@ function statsText(stats) {
   if (stats.tokens_per_second) parts.push(`${stats.tokens_per_second} ток/с`);
   if (stats.elapsed_seconds) parts.push(`${fmtSeconds(stats.elapsed_seconds)}`);
   if (stats.context_percent !== null && stats.context_percent !== undefined) {
-    parts.push(`контекст ${stats.context_percent}%`);
+    // Именно «пик»: у ответа с инструментами промпт последнего круга больше
+    // самой переписки. Внизу экрана — объём чата, тут — самый тяжёлый запрос
+    // этого ответа; без слова «пик» два процента путались бы.
+    parts.push(`пик ${stats.context_percent}%`);
   }
   return parts.join(" · ");
 }
@@ -789,7 +794,35 @@ async function loadMessages() {
   for (const m of messages) if (m.role === "assistant") lastAssistantId = m.id;
   els.messages.replaceChildren(...messages.map((m) =>
     messageNode(m, m.role === "assistant" && m.id === lastAssistantId)));
+  renderUsage(messages);
   scrollToBottom(true);  // после перерисовки истории — принудительно вниз
+}
+
+// Сколько контекста занимает сама переписка. Берём измеренное сервером
+// значение из последнего ответа, где оно есть: цифра под каждым сообщением
+// говорит про ОДИН ответ, а здесь нужен весь чат целиком.
+function renderUsage(messages) {
+  if (!els.usage) return;
+  let stats = null;
+  for (const m of messages) {
+    if (m.role === "assistant" && m.stats && m.stats.chat_tokens) stats = m.stats;
+  }
+  if (!stats) { els.usage.hidden = true; return; }
+  const parts = [`чат: ${fmtTokens(stats.chat_tokens)} ток.`];
+  if (stats.chat_percent !== null && stats.chat_percent !== undefined) {
+    parts.push(`${stats.chat_percent}% контекста`);
+  }
+  if (stats.context_size) parts.push(`из ${fmtTokens(stats.context_size)}`);
+  els.usage.textContent = parts.join(" · ");
+  els.usage.classList.toggle("warn", (stats.chat_percent || 0) >= 70);
+  els.usage.title = "Объём переписки: системный промпт, инструменты, история и "
+    + "последний ответ. Именно столько уйдёт модели в следующем запросе.";
+  els.usage.hidden = false;
+}
+
+// 12400 → «12 400»: неразрывный пробел, чтобы число не рвалось переносом
+function fmtTokens(value) {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
 // --- Высота поля ввода: авторост по содержимому + ручка (тянуть вверх) ---
@@ -849,7 +882,10 @@ function updateInputState() {
   els.empty.hidden = hasChat;
   els.form.hidden = !hasChat;
   els.optionsBtn.hidden = !hasChat; // шестерёнка и шторка — только при открытом чате
-  if (!hasChat) els.options.hidden = true;
+  if (!hasChat) {
+    els.options.hidden = true;
+    if (els.usage) els.usage.hidden = true;  // счётчик относится к чату
+  }
   updatePromptButton();
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;

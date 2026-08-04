@@ -174,11 +174,18 @@ async def chat_completions(request: Request):
                 for text in _content_chunks(last_user):
                     yield chunk({"content": text})
                     await asyncio.sleep(2.0 if slow else 0.01)
-        # Финальный чанк со счётчиками — как llama.cpp (usage + timings)
+        # Финальный чанк со счётчиками — как llama.cpp (usage + timings).
+        # BIG_PROMPT: промпт растёт по кругам агентного цикла, как на самом
+        # деле (каждый круг добавляет вызов и результат инструмента) — иначе
+        # не отличить «объём чата» от пикового заполнения контекста.
+        prompt_tokens = 100 + (500 * len([m for m in messages if m.get("role") == "tool"])
+                               if "BIG_PROMPT" in last_user else 0)
         yield "data: " + json.dumps({
             "choices": [],
-            "usage": {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125},
-            "timings": {"prompt_n": 100, "predicted_n": 25, "predicted_per_second": 18.5},
+            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 25,
+                      "total_tokens": prompt_tokens + 25},
+            "timings": {"prompt_n": prompt_tokens, "predicted_n": 25,
+                        "predicted_per_second": 18.5},
         }) + "\n\n"
         yield "data: [DONE]\n\n"
 
