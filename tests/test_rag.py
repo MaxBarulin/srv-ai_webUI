@@ -81,12 +81,18 @@ def test_rag_context_inserted_and_sources_shown(client, rag_user, monkeypatch):
     assert len(sources) == 1
     assert "Контекст по запросу" in sources[0]["text"]
 
-    # Контекст вставлен отдельным system-сообщением перед сообщением пользователя
+    # Контекст вставлен отдельным сообщением перед вопросом пользователя.
+    # Роль именно user: шаблон Qwen3.6 выбрасывает все сообщения с ролью
+    # system, кроме первых одного-двух, — с ролью system контекст до модели
+    # не доходил вовсе (регресс от 04.08.2026, см. docs/context-pipeline.md).
     msgs = captured[0]
     assert msgs[-1]["role"] == "user"
-    assert msgs[-2]["role"] == "system"
+    assert msgs[-2]["role"] == "user"
     assert "КОНТЕКСТ БАЗЫ ЗНАНИЙ" in msgs[-2]["content"]
     assert "указывай источники" in msgs[-2]["content"].lower()
+    # Системным остаётся только первое сообщение — иначе шаблон его потеряет
+    assert msgs[0]["role"] == "system"
+    assert [m["role"] for m in msgs[1:]].count("system") == 0
 
     # Источники сохранены в истории
     messages = client.get(f"/api/chats/{chat_id}/messages").json()

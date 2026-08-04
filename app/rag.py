@@ -64,5 +64,15 @@ async def fetch_context(query: str) -> str:
 
 
 def context_message(context: str) -> dict:
-    """Системное сообщение с контекстом для вставки в промпт (§8)."""
-    return {"role": "system", "content": CONTEXT_INSTRUCTION.format(context=context)}
+    """Сообщение с контекстом для вставки перед вопросом пользователя (§8).
+
+    Роль именно user, а не system. Шаблон Qwen3.6 сводит в системный блок
+    только ПЕРВЫЕ одно-два сообщения списка, а все остальные с ролью system
+    молча выбрасывает:
+
+        {%- if loop.index0 >= num_sys and message.role != "system" … %}
+
+    Контекст же вставляется перед последним вопросом, то есть в середину
+    списка, — с ролью system он до модели не доходил вовсе.
+    """
+    return {"role": "user", "content": CONTEXT_INSTRUCTION.format(context=context)}
