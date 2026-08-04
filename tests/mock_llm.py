@@ -124,6 +124,17 @@ async def chat_completions(request: Request):
             for i in range(0, len(block), 15):
                 yield chunk({"content": block[i:i + 15]})
                 await asyncio.sleep(0.01)
+        elif "ECHO_TOOL_THINK" in last_user:
+            # Первый круг — вызов инструмента, второй — отчёт о том, что
+            # сервер увидел в размышлениях ассистентских сообщений хода
+            if not has_tool_result:
+                yield chunk({"tool_calls": [{
+                    "index": 0, "id": "call_1", "type": "function",
+                    "function": {"name": "get_current_datetime", "arguments": "{}"}}]})
+            else:
+                yield chunk({"content": json.dumps(
+                    [m.get("reasoning_content") for m in messages
+                     if m.get("role") == "assistant"], ensure_ascii=False)})
         elif "ECHO_REQUEST" in last_user:
             # Отдать обратно то, что сервер реально получил: параметры шаблона
             # и размышления в истории — иначе проверить нечем

@@ -386,6 +386,40 @@ def test_destructive_executes_directly_when_confirm_disabled(client, tool_user, 
     assert _events_of(events, "tool") == [{"label": "удалена заметка «Тестовая заметка»"}]
 
 
+def test_reasoning_carried_between_tool_rounds(client, tool_user):
+    """Interleaved thinking: размышление круга уходит обратно вместе с вызовом.
+
+    Без этого на каждом круге агентного цикла модель обдумывает заново то,
+    что уже решила на предыдущем, и теряет нить: зачем искала заметку и что
+    собиралась из неё взять.
+    """
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "ECHO_TOOL_THINK узнай время")
+    seen = json.loads("".join(d["text"] for d in _events_of(events, "content")))
+
+    assert seen == ["Пользователь спрашивает. Надо ответить кратко и по делу."]
+
+
+def test_reasoning_not_carried_when_thinking_disabled(client, tool_user):
+    """Размышления выключены — переносить нечего."""
+    chat_id = _new_chat(client)
+    r = client.post(f"/api/chats/{chat_id}/messages",
+                    json={"content": "ECHO_TOOL_THINK", "use_tools": True,
+                          "enable_thinking": False})
+    seen = json.loads("".join(d["text"] for e, d in _parse_sse(r.text) if e == "content"))
+    assert seen == [None]
+
+
+def test_reasoning_between_rounds_can_be_switched_off(client, tool_user, monkeypatch):
+    """Тот же рубильник PRESERVE_THINKING выключает и перенос внутри хода."""
+    monkeypatch.setattr("app.routers.chat.settings",
+                        replace(settings, preserve_thinking=False))
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "ECHO_TOOL_THINK")
+    seen = json.loads("".join(d["text"] for d in _events_of(events, "content")))
+    assert seen == [None]
+
+
 def test_tool_call_written_inside_reasoning_is_rescued(client, tool_user):
     """Прецедент: модель выписала вызов текстом в размышлении, в XML-диалекте.
 

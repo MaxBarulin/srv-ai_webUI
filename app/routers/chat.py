@@ -695,8 +695,17 @@ async def send_message(
                 if not fallback_used and not holding and step_text:
                     content_parts.append(step_text)
 
-                msgs.append({"role": "assistant", "content": step_text or None,
-                             "tool_calls": tool_calls})
+                # Размышление шага уходит обратно вместе с его вызовом
+                # («interleaved thinking» — штатный режим Qwen3.6 внутри одного
+                # хода). Без него на каждом круге модель обдумывает заново то,
+                # что уже решила на предыдущем, и легко теряет нить цепочки:
+                # зачем искала заметку, что собиралась из неё взять.
+                step_msg = {"role": "assistant", "content": step_text or None,
+                            "tool_calls": tool_calls}
+                step_think = "".join(step_reasoning).strip()
+                if step_think and settings.preserve_thinking and payload.enable_thinking:
+                    step_msg["reasoning_content"] = step_think
+                msgs.append(step_msg)
                 for tc in tool_calls:
                     result, (event, data, activity) = await run_tool_call(tc)
                     tool_activity.append(activity)
