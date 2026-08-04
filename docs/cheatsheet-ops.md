@@ -55,7 +55,7 @@ chmod 600 ~/srv-ai-ui/.env # права: только владелец (там D
 | `LLM_CONTEXT_SIZE` | запасной n_ctx (обычно берётся из /props сам) |
 | `RAG_ENABLED` / `RAG_BASE_URL` | база знаний LightRAG |
 | `PII_FILTER=true` | маскирование персональных данных |
-| `TOOLS_CONFIRM_DESTRUCTIVE` | подтверждение удалений от LLM |
+| `TOOLS_CONFIRM_DESTRUCTIVE` | подтверждение опасных действий LLM: удаление, перезапись текста заметки, смена области, любая правка события |
 | `DB_KEY` | шифрование БД (менять НЕЛЬЗЯ без rekey!) |
 | `CHAT_RETENTION_DAYS` | автоочистка истории (0 = хранить вечно) |
 

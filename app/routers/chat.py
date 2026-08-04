@@ -525,18 +525,21 @@ async def send_message(
                      {"label": f"{name}: некорректные аргументы", "status": "error"}))
         try:
             if is_destructive(name, args) and settings.tools_confirm_destructive:
+                # Пустая подпись — правка ничего не меняет (модель переслала
+                # прежние значения): спрашивать не о чем, исполняем сразу.
                 label = await preview_destructive(user, name, args)
-                token = register_pending(user, name, args, label)
-                result = {
-                    "status": "requires_confirmation",
-                    "message": "Действие требует подтверждения пользователя — кнопка показана "
-                               "в интерфейсе. Не вызывай инструмент повторно, сообщи пользователю, "
-                               "что ожидается подтверждение.",
-                }
-                # token сохраняется в активности, чтобы кнопка «Подтвердить»
-                # пережила перечитывание истории и перезагрузку страницы
-                return (result, ("tool_confirm", {"token": token, "label": label},
-                                 {"label": label, "status": "confirm", "token": token}))
+                if label:
+                    token = register_pending(user, name, args, label)
+                    result = {
+                        "status": "requires_confirmation",
+                        "message": "Действие требует подтверждения пользователя — кнопка показана "
+                                   "в интерфейсе. Не вызывай инструмент повторно, сообщи "
+                                   "пользователю, что ожидается подтверждение.",
+                    }
+                    # token сохраняется в активности, чтобы кнопка «Подтвердить»
+                    # пережила перечитывание истории и перезагрузку страницы
+                    return (result, ("tool_confirm", {"token": token, "label": label},
+                                     {"label": label, "status": "confirm", "token": token}))
             result, label = await execute_tool(user, name, args, user_ip)
             data = {"label": label}
             activity = {"label": label, "status": "ok"}

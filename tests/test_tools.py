@@ -62,6 +62,22 @@ def _insert_note(owner_id: int, note_id: int = 1, title: str = "Тестовая
         conn.close()
 
 
+def _insert_event(owner_id: int, event_id: int = 1, title: str = "Совещание",
+                  scope: str = "personal") -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO events (id, owner_id, scope, title, starts_at, ends_at, "
+            "created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, "
+            "datetime('now'), datetime('now'), ?)",
+            (event_id, owner_id, scope, title, "2026-07-15T10:00:00+03:00",
+             "2026-07-15T11:00:00+03:00", owner_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _send(client, chat_id: int, content: str, use_tools: bool = True):
     r = client.post(f"/api/chats/{chat_id}/messages",
                     json={"content": content, "use_tools": use_tools})
@@ -271,6 +287,78 @@ def test_note_rewrite_is_destructive_but_rename_is_not(client, tool_user):
     events = _send(client, chat_id, "TOOL_RENAME_NOTE переименуй")
     assert _events_of(events, "tool_confirm") == []
     assert _events_of(events, "tool") == [{"label": "обновлена заметка «Новый заголовок»"}]
+
+
+def test_note_scope_change_requires_confirmation(client, tool_user):
+    """Личная → общая: заметку увидит весь отдел, спрашиваем. Тэги — нет."""
+    _insert_note(tool_user, note_id=1)
+    chat_id = _new_chat(client)
+
+    events = _send(client, chat_id, "TOOL_SHARE_NOTE опубликуй")
+    confirms = _events_of(events, "tool_confirm")
+    assert len(confirms) == 1
+    assert confirms[0]["label"] == "изменить заметку «Тестовая заметка»: сделать общей"
+    conn = _connect()
+    try:  # до подтверждения область прежняя
+        assert conn.execute("SELECT scope FROM notes WHERE id = 1").fetchone()[0] == "personal"
+    finally:
+        conn.close()
+
+    events = _send(client, chat_id, "TOOL_TAG_NOTE проставь тэг")
+    assert _events_of(events, "tool_confirm") == []
+
+
+def test_update_without_real_change_is_not_confirmed(client, tool_user):
+    """Модель переслала прежний текст — менять нечего, спрашивать не о чем;
+    заголовок при этом обновляется как обычно."""
+    _insert_note(tool_user, note_id=1, body="секретный текст")
+    chat_id = _new_chat(client)
+
+    events = _send(client, chat_id, "TOOL_SAME_TEXT_NOTE")
+    assert _events_of(events, "tool_confirm") == []
+    assert _events_of(events, "tool") == [{"label": "обновлена заметка «Новый заголовок»"}]
+
+    _insert_event(tool_user, event_id=1)
+    events = _send(client, chat_id, "TOOL_SAME_EVENT")
+    assert _events_of(events, "tool_confirm") == []
+    assert _events_of(events, "tool") == [
+        {"label": "обновлено событие «Совещание» (15.07.2026 10:00)"}]
+
+
+def test_event_edits_require_confirmation(client, tool_user):
+    """Любая правка события подтверждается, и в плашке видно, что именно меняется."""
+    chat_id = _new_chat(client)
+
+    _insert_event(tool_user, event_id=1)
+    events = _send(client, chat_id, "TOOL_MOVE_EVENT перенеси")
+    confirms = _events_of(events, "tool_confirm")
+    assert len(confirms) == 1
+    assert confirms[0]["label"] == (
+        "изменить событие «Совещание»: перенести с 15.07.2026 10:00 на 16.07.2026 15:00")
+    conn = _connect()
+    try:  # до подтверждения событие на месте
+        assert conn.execute("SELECT starts_at FROM events WHERE id = 1").fetchone()[0] \
+            == "2026-07-15T10:00:00+03:00"
+    finally:
+        conn.close()
+
+    events = _send(client, chat_id, "TOOL_RENAME_EVENT переименуй")
+    assert _events_of(events, "tool_confirm")[0]["label"] == (
+        "изменить событие «Совещание»: переименовать в «Другое название»")
+
+    events = _send(client, chat_id, "TOOL_SHARE_EVENT опубликуй")
+    assert _events_of(events, "tool_confirm")[0]["label"] == (
+        "изменить событие «Совещание»: сделать общим")
+
+    # И перенос доводится до конца по кнопке
+    token = _events_of(_send(client, chat_id, "TOOL_MOVE_EVENT"), "tool_confirm")[0]["token"]
+    assert client.post("/api/tools/confirm", json={"token": token}).status_code == 200
+    conn = _connect()
+    try:
+        assert conn.execute("SELECT starts_at FROM events WHERE id = 1").fetchone()[0] \
+            == "2026-07-16T15:00:00+03:00"
+    finally:
+        conn.close()
 
 
 def test_confirm_token_bound_to_user(client, make_user, tool_user):

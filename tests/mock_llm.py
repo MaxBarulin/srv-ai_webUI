@@ -41,11 +41,23 @@ TOOL_TRIGGERS: dict[str, tuple[str, dict]] = {
     "TOOL_DELETE_NOTE": ("notes_delete", {"id": 1}),
     "TOOL_REWRITE_NOTE": ("notes_update", {"id": 1, "text": "Новый текст"}),
     "TOOL_RENAME_NOTE": ("notes_update", {"id": 1, "title": "Новый заголовок"}),
+    "TOOL_SHARE_NOTE": ("notes_update", {"id": 1, "scope": "shared"}),
+    "TOOL_TAG_NOTE": ("notes_update", {"id": 1, "tags": ["новый"]}),
+    "TOOL_SAME_TEXT_NOTE": ("notes_update", {"id": 1, "text": "секретный текст",
+                                             "title": "Новый заголовок"}),
     "TOOL_CREATE_EVENT": ("calendar_create", {
         "title": "Совещание", "starts_at": "2026-07-15T10:00:00+03:00",
         "ends_at": "2026-07-15T11:00:00+03:00", "scope": "personal"}),
     "TOOL_LIST_EVENTS": ("calendar_list", {}),
     "TOOL_DELETE_EVENT": ("calendar_delete", {"id": 1}),
+    "TOOL_MOVE_EVENT": ("calendar_update", {
+        "id": 1, "starts_at": "2026-07-16T15:00:00+03:00",
+        "ends_at": "2026-07-16T16:00:00+03:00"}),
+    "TOOL_RENAME_EVENT": ("calendar_update", {"id": 1, "title": "Другое название"}),
+    "TOOL_SHARE_EVENT": ("calendar_update", {"id": 1, "scope": "shared"}),
+    "TOOL_SAME_EVENT": ("calendar_update", {
+        "id": 1, "title": "Совещание", "starts_at": "2026-07-15T10:00:00+03:00",
+        "ends_at": "2026-07-15T11:00:00+03:00"}),
     "TOOL_TIME": ("get_current_datetime", {}),
     "TOOL_UNKNOWN": ("no_such_tool", {}),
     "TOOL_LOOP": ("get_current_datetime", {}),  # вызывает инструмент бесконечно (лимит цикла)

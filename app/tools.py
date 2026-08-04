@@ -4,10 +4,11 @@
 чужие личные данные недоступны). Каждый выполненный вызов пишется в audit_log
 (только факт: кто, какой инструмент, какой объект — без содержания).
 
-Деструктивные действия (удаление, перезапись текста заметки) при
-TOOLS_CONFIRM_DESTRUCTIVE=true не исполняются сразу: регистрируется отложенное
-действие, пользователю в UI показывается кнопка подтверждения, а модель
-получает ответ «требуется подтверждение».
+Деструктивные действия (удаление, перезапись текста заметки, смена области,
+любая правка события) при TOOLS_CONFIRM_DESTRUCTIVE=true не исполняются сразу:
+регистрируется отложенное действие, пользователю в UI показывается кнопка
+подтверждения с перечнем того, что именно изменится, а модель получает ответ
+«требуется подтверждение».
 """
 from __future__ import annotations
 
@@ -120,9 +121,18 @@ class ToolError(Exception):
 
 
 def is_destructive(name: str, args: dict) -> bool:
+    """Нужно ли спрашивать подтверждение (грубый отбор по именам полей).
+
+    Здесь БД ещё не читалась, поэтому «передано поле» не значит «значение
+    изменится»: правку без фактических изменений отсеет preview_destructive,
+    вернув пустую подпись. Заголовок и тэги заметки не спрашиваем — они
+    восстанавливаются по памяти, в отличие от вытесненного текста.
+    """
     if name in ("notes_delete", "calendar_delete"):
         return True
-    return name == "notes_update" and "text" in args
+    if name == "notes_update":
+        return "text" in args or "scope" in args
+    return name == "calendar_update"
 
 
 # --- Отложенные действия (подтверждение деструктивных) ---
@@ -366,18 +376,81 @@ def _fmt_event_date(starts_at: str) -> str:
         return starts_at
 
 
+def _duration(starts_at: str, ends_at: str) -> float | None:
+    try:
+        return (datetime.fromisoformat(ends_at) - datetime.fromisoformat(starts_at)).total_seconds()
+    except ValueError:
+        return None
+
+
+def _note_changes(row, args: dict) -> list[str]:
+    """Что именно поменяется в заметке — человеческим языком, старое → новое."""
+    parts: list[str] = []
+    if "text" in args and _str(args, "text") != row["body"]:
+        parts.append("перезаписать текст")
+    if "scope" in args:
+        scope = _scope(args, row["scope"])
+        if scope != row["scope"]:
+            parts.append("сделать общей" if scope == "shared" else "сделать личной")
+    return parts
+
+
+def _event_changes(row, args: dict) -> list[str]:
+    parts: list[str] = []
+    if "title" in args:
+        title = _str(args, "title").strip()
+        if title and title != row["title"]:
+            parts.append(f"переименовать в «{title}»")
+    starts_at = row["starts_at"] if "starts_at" not in args \
+        else _check_iso(_str(args, "starts_at"), "starts_at")
+    ends_at = row["ends_at"] if "ends_at" not in args \
+        else _check_iso(_str(args, "ends_at"), "ends_at")
+    if starts_at != row["starts_at"]:
+        parts.append(f"перенести с {_fmt_event_date(row['starts_at'])} "
+                     f"на {_fmt_event_date(starts_at)}")
+    # Про окончание пишем, только если оно поехало само по себе: при обычном
+    # переносе целиком оно и так следует за началом, и вторая строка в плашке
+    # лишь размывает главное — куда именно переехало событие.
+    if ends_at != row["ends_at"] and _duration(starts_at, ends_at) \
+            != _duration(row["starts_at"], row["ends_at"]):
+        parts.append(f"окончание с {_fmt_event_date(row['ends_at'])} "
+                     f"на {_fmt_event_date(ends_at)}")
+    if "all_day" in args and int(bool(args["all_day"])) != row["all_day"]:
+        parts.append("отметить «весь день»" if args["all_day"]
+                     else "снять отметку «весь день»")
+    if "location" in args and _str(args, "location") != row["location"]:
+        place = _str(args, "location").strip()
+        parts.append(f"место — «{place}»" if place else "убрать место проведения")
+    if "description" in args and _str(args, "description") != row["description"]:
+        parts.append("переписать описание")
+    if "scope" in args:
+        scope = _scope(args, row["scope"])
+        if scope != row["scope"]:
+            parts.append("сделать общим" if scope == "shared" else "сделать личным")
+    return parts
+
+
 async def preview_destructive(user: dict, name: str, args: dict) -> str:
-    """Проверить объект и вернуть описание действия для кнопки подтверждения."""
+    """Проверить объект и вернуть описание действия для кнопки подтверждения.
+
+    Пустая строка означает «подтверждать нечего»: правка не меняет ни одного
+    значения (модель переслала прежние) — такой вызов исполняется сразу.
+    """
     async with get_connection() as db:
         if name == "notes_delete":
             row = await _get_note(db, _req_int(args, "id"), user)
             return f"удалить заметку «{row['title']}»"
         if name == "notes_update":
             row = await _get_note(db, _req_int(args, "id"), user)
-            return f"перезаписать заметку «{row['title']}»"
+            changes = _note_changes(row, args)
+            return f"изменить заметку «{row['title']}»: {', '.join(changes)}" if changes else ""
         if name == "calendar_delete":
             row = await _get_event(db, _req_int(args, "id"), user)
             return f"удалить событие «{row['title']}»"
+        if name == "calendar_update":
+            row = await _get_event(db, _req_int(args, "id"), user)
+            changes = _event_changes(row, args)
+            return f"изменить событие «{row['title']}»: {', '.join(changes)}" if changes else ""
     raise ToolError(f"Неизвестное деструктивное действие: {name}")
 
 
