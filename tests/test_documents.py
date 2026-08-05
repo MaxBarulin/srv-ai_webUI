@@ -416,3 +416,134 @@ def test_empty_message_without_attachments_rejected(client, doc_user):
     r = client.post(f"/api/chats/{chat_id}/messages",
                     json={"content": "  ", "use_tools": False})
     assert r.status_code == 400
+
+
+# --- Расшифровка изображений (§16) ---
+
+def _spy_llm(monkeypatch):
+    captured = []
+    orig = llm_module.stream_chat
+
+    def spy(messages, tools=None, **kwargs):
+        captured.append(messages)
+        return orig(messages, tools=tools)
+
+    monkeypatch.setattr("app.routers.chat.stream_chat", spy)
+    return captured
+
+
+def test_upload_image_returns_transcript(client, doc_user):
+    """Картинка расшифровывается сразу при загрузке, а не при чтении истории:
+    потом расшифровывать нечего — самой картинки в переписке уже нет."""
+    files = {"file": ("draft.png", _png_bytes(), "image/png")}
+    body = client.post("/api/attachments", files=files).json()
+    assert body["images"]
+    assert "РАСШИФРОВКА" in body["transcript"]
+    assert "09Г2С" in body["transcript"]
+
+
+def test_upload_document_has_no_transcript(client, doc_user):
+    files = {"file": ("note.txt", "Текст".encode(), "text/plain")}
+    assert client.post("/api/attachments", files=files).json()["transcript"] == ""
+
+
+def test_transcribe_can_be_disabled(client, doc_user, monkeypatch):
+    from app import transcribe as transcribe_module
+    monkeypatch.setattr(transcribe_module, "settings", replace(settings, image_transcribe=False))
+    files = {"file": ("draft.png", _png_bytes(), "image/png")}
+    body = client.post("/api/attachments", files=files).json()
+    assert body["images"] and body["transcript"] == ""
+
+
+def test_transcribe_survives_llm_failure(client, doc_user, monkeypatch):
+    async def boom(*a, **kw):
+        raise llm_module.LLMError("нет связи")
+        yield  # pragma: no cover — генератор
+
+    monkeypatch.setattr("app.transcribe.stream_chat", boom)
+    files = {"file": ("draft.png", _png_bytes(), "image/png")}
+    body = client.post("/api/attachments", files=files).json()
+    # Загрузка не падает: картинку всё ещё можно отправить, просто без пересказа
+    assert body["images"] and body["transcript"] == ""
+    assert any("расшифровать" in w for w in body["warnings"])
+
+
+def test_transcript_replaces_image_in_later_turns(client, doc_user, monkeypatch):
+    captured = _spy_llm(monkeypatch)
+    data_url = "data:image/png;base64," + base64.b64encode(_png_bytes()).decode()
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на чертеже?", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [data_url],
+                         "transcript": "Вал Ø40 мм, сталь 09Г2С."}],
+    })
+    # Первый ход: модель видит саму картинку, пересказ ей не нужен
+    first = captured[0][-1]
+    assert isinstance(first["content"], list)
+    assert "09Г2С" not in json.dumps(first["content"], ensure_ascii=False)
+
+    client.post(f"/api/chats/{chat_id}/messages",
+                json={"content": "а марка стали?", "use_tools": False})
+    history = json.dumps(captured[1], ensure_ascii=False)
+    assert "Вал Ø40 мм, сталь 09Г2С." in history   # содержимое картинки осталось
+    assert "base64" not in history                  # а сама картинка — нет
+    assert "самой картинки в переписке больше нет" in history
+
+    # Расшифровка хранится вместе с пометкой об имени файла
+    stored = [m for m in client.get(f"/api/chats/{chat_id}/messages").json()
+              if m["role"] == "user"][0]
+    assert stored["attachments"] == [
+        {"filename": "draft.png", "image": True, "transcript": "Вал Ø40 мм, сталь 09Г2С."}]
+
+
+def test_transcript_without_image_restores_content(client, doc_user, monkeypatch):
+    """«Перегенерировать» и правка запроса: картинки уже нет, но её расшифровка
+    сохранилась — она и уходит модели вместо потерянного вложения."""
+    captured = _spy_llm(monkeypatch)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на чертеже?", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [],
+                         "transcript": "Вал Ø40 мм, сталь 09Г2С."}],
+    })
+    assert r.status_code == 200
+    sent = captured[0][-1]["content"]
+    assert isinstance(sent, str)  # картинок нет — обычное текстовое сообщение
+    assert "Вал Ø40 мм, сталь 09Г2С." in sent
+    assert "«draft.png»" in sent
+
+
+def test_message_with_only_transcript_is_not_empty(client, doc_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "transcript": "Вал Ø40 мм."}],
+    })
+    assert r.status_code == 200
+
+
+def test_transcript_counts_against_attachment_budget(client, doc_user, monkeypatch):
+    monkeypatch.setattr("app.routers.chat.MAX_ATTACHMENT_CHARS", 100)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": ["data:image/png;base64,AAA"],
+                         "transcript": "Я" * 500}],
+    })
+    warnings = [d["detail"] for e, d in _parse_sse(r.text) if e == "doc_warning"]
+    assert any("расшифровка «draft.png» обрезан" in w for w in warnings)
+
+
+def test_transcript_masked_by_pii_filter(client, doc_user, monkeypatch):
+    from app import pii as pii_module
+    monkeypatch.setattr(pii_module, "settings",
+                        replace(settings, pii_filter=True, pii_whitelist_file=""))
+    captured = _spy_llm(monkeypatch)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
+        "attachments": [{"filename": "scan.png", "images": [],
+                         "transcript": "Исполнитель: +7 999 123-45-67"}],
+    })
+    sent = json.dumps(captured[0][-1], ensure_ascii=False)
+    assert "999 123-45-67" not in sent

@@ -4,6 +4,11 @@ Endpoint без сохранения состояния: файл парситс
 возвращается извлечённый текст и/или изображения (data-URL). Исходный файл не
 хранится. Разобранное содержимое клиент отправляет вместе со следующим
 сообщением чата (см. chat.send_message).
+
+Картинки здесь же расшифровываются (app.transcribe): в переписке они не
+сохраняются, и без пересказа от них на следующем ходу остаётся одно имя файла.
+Из-за этого ответ на загрузку картинки идёт десятки секунд — это плата
+осознанная, ждать приходится, пока пользователь дописывает вопрос.
 """
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from app.auth import get_current_user
 from app.config import settings
 from app.documents import DocumentError, parse_upload
+from app.transcribe import transcribe_images
 
 router = APIRouter(prefix="/api", tags=["attachments"])
 
@@ -33,10 +39,15 @@ async def upload_attachment(
                            pdf_mode=pdf_mode)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    transcript, warning = await transcribe_images(doc.filename, doc.images)
+    warnings = list(doc.warnings)
+    if warning:
+        warnings.append(warning)
     return {
         "filename": doc.filename,
         "text": doc.text,
         "images": doc.images,
-        "warnings": doc.warnings,
+        "transcript": transcript,
+        "warnings": warnings,
         "token_estimate": doc.token_estimate,
     }

@@ -62,6 +62,7 @@ class Settings:
     max_upload_mb: int
     max_body_mb: int
     vision_max_pages: int
+    image_transcribe: bool
     pii_filter: bool
     pii_whitelist_file: str
     db_key: str
@@ -95,6 +96,9 @@ def load_settings() -> Settings:
         max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),
         max_body_mb=_get_int("MAX_BODY_MB", 64),
         vision_max_pages=_get_int("VISION_MAX_PAGES", 0),  # 0 — все страницы
+        # Расшифровка картинки при загрузке (§16): без неё в истории от
+        # изображения остаётся только имя файла
+        image_transcribe=_get_bool("IMAGE_TRANSCRIBE", True),
         pii_filter=_get_bool("PII_FILTER", False),
         pii_whitelist_file=_get("PII_WHITELIST_FILE", ""),
         db_key=_get("DB_KEY", "").strip(),

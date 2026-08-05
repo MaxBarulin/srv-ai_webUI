@@ -62,6 +62,19 @@ def document_block(filename: str, text: str) -> str:
             f"{text}")
 
 
+def image_block(filename: str, transcript: str) -> str:
+    """Изображение в том виде, в каком его видит модель на следующих ходах.
+
+    Сама картинка уходит только на своём ходу — дальше от неё остаётся этот
+    пересказ, снятый при загрузке (app/transcribe.py). Формулировка прямо
+    говорит, что рассматривать заново нечего: иначе модель отвечает «пришлите
+    изображение ещё раз», хотя всё нужное у неё перед глазами.
+    """
+    return (f"[Изображение «{filename}» — самой картинки в переписке больше нет, "
+            f"ниже её расшифровка, снятая при загрузке; она остаётся доступной "
+            f"до конца разговора]\n{transcript}")
+
+
 class CreateChatRequest(BaseModel):
     title: str = ""
     specialization_id: int | None = None
@@ -83,6 +96,10 @@ class Attachment(BaseModel):
     filename: str = "file"
     text: str = ""
     images: list[str] = []  # data-URL, только на время генерации (§16)
+    # Расшифровка картинок, снятая при загрузке. В отличие от самих картинок,
+    # остаётся в истории навсегда. Приходит пустой у документов и у картинок,
+    # которые расшифровать не удалось.
+    transcript: str = ""
 
 
 class SendMessageRequest(BaseModel):
@@ -376,7 +393,10 @@ async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
             if row["role"] == "user" and isinstance(meta, dict):
                 for att in meta.get("attachments", []):
                     if att.get("image"):
-                        text += f"\n[приложено изображение: {att.get('filename', '')}]"
+                        name = att.get("filename", "изображение")
+                        transcript = (att.get("transcript") or "").strip()
+                        text += ("\n\n" + image_block(name, transcript) if transcript
+                                 else f"\n[приложено изображение: {name}]")
                     elif att.get("text"):
                         text += "\n\n" + document_block(
                             att.get("filename", "файл"), att["text"])
@@ -427,7 +447,7 @@ async def send_message(
 ) -> StreamingResponse:
     content = payload.content.strip()
     has_images = any(a.images for a in payload.attachments)
-    has_doc_text = any(a.text.strip() for a in payload.attachments)
+    has_doc_text = any(a.text.strip() or a.transcript.strip() for a in payload.attachments)
     if not content and not has_images and not has_doc_text:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
 
@@ -457,18 +477,39 @@ async def send_message(
     doc_warnings: list[str] = []
     attachments_meta: list[dict] = []
     remaining = MAX_ATTACHMENT_CHARS
+
+    def _fit(kind: str, filename: str, text: str) -> str:
+        """Уложить текст вложения в общий бюджет, отметив усечение."""
+        nonlocal remaining
+        if len(text) > remaining:
+            text = text[:remaining]
+            doc_warnings.append(f"{kind} «{filename}» обрезан по лимиту контекста")
+        remaining = max(0, remaining - len(text))
+        return text
+
     for att in payload.attachments:
+        transcript = _mask(att.transcript.strip())
         if att.images:
-            # Изображения в БД не хранятся (§16) — только пометка об имени файла
-            attachments_meta.append({"filename": att.filename, "image": True})
+            # Сами картинки в БД не хранятся (§16). Остаётся расшифровка,
+            # снятая при загрузке, — она и заменит картинку в следующих ходах.
+            if transcript:
+                transcript = _fit("расшифровка", att.filename, transcript)
+            attachments_meta.append({"filename": att.filename, "image": True,
+                                     **({"transcript": transcript} if transcript else {})})
+            continue
+        if transcript:
+            # Картинки нет, а расшифровка есть — это «Перегенерировать» или
+            # правка запроса: перезагрузить картинку неоткуда, но её содержимое
+            # мы знаем, и терять его на ровном месте незачем.
+            transcript = _fit("расшифровка", att.filename, transcript)
+            doc_texts.append(image_block(att.filename, transcript))
+            attachments_meta.append({"filename": att.filename, "image": True,
+                                     "transcript": transcript})
             continue
         text = _mask(att.text.strip())
         if not text:
             continue
-        if len(text) > remaining:
-            text = text[:remaining]
-            doc_warnings.append(f"документ «{att.filename}» обрезан по лимиту контекста")
-        remaining = max(0, remaining - len(text))
+        text = _fit("документ", att.filename, text)
         doc_texts.append(document_block(att.filename, text))
         attachments_meta.append({"filename": att.filename, "text": text})
 

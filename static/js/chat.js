@@ -316,11 +316,16 @@ async function useExample(text) {
 
 // --- Вложения (§16) ---
 
+// Картинка расшифровывается на сервере прямо при загрузке (§16), а это
+// полноценная генерация — десятки секунд. Поэтому вложение появляется в
+// списке сразу, помеченным как обрабатываемое: кнопку не блокируем (можно
+// приложить следующий файл), но отправку до готовности не пускаем.
 async function uploadAttachment(file) {
   if (!file) return;
-  els.attachBtn.disabled = true;
-  const label = els.attachBtn.textContent;
-  els.attachBtn.textContent = "Загрузка…";
+  const entry = { filename: file.name || "файл", pending: true, images: [] };
+  pendingAttachments.push(entry);
+  renderAttachments();
+  updateInputState();
   try {
     const form = new FormData();
     form.append("file", file);
@@ -332,14 +337,20 @@ async function uploadAttachment(file) {
     if (r.status === 401) { location.href = "/login"; return; }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `Ошибка ${r.status}`);
-    pendingAttachments.push(data);
+    // Пока грузилось, вложение могли убрать крестиком — тогда результат
+    // молча выбрасываем, обратно в список он не возвращается.
+    const idx = pendingAttachments.indexOf(entry);
+    if (idx < 0) return;
+    pendingAttachments[idx] = data;
     (data.warnings || []).forEach((w) => els.toast(w));
     renderAttachments();
   } catch (e) {
+    const idx = pendingAttachments.indexOf(entry);
+    if (idx >= 0) pendingAttachments.splice(idx, 1);
+    renderAttachments();
     els.toast(e.message || "Не удалось обработать файл", true);
   } finally {
-    els.attachBtn.disabled = false;
-    els.attachBtn.textContent = label;
+    updateInputState();
   }
 }
 
@@ -378,8 +389,22 @@ function renderAttachments() {
   els.attachments.replaceChildren(...pendingAttachments.map((att, idx) => {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
-    const isImage = att.images && att.images.length;
-    chip.textContent = `${isImage ? "🖼" : "📄"} ${att.filename}`;
+    const isImage = att.pending ? /\.(png|jpe?g|gif|bmp|webp|tiff?|pdf)$/i.test(att.filename)
+                                : !!(att.images && att.images.length);
+    chip.textContent = `${att.pending ? "⏳" : isImage ? "🖼" : "📄"} ${att.filename}`;
+    if (att.pending) {
+      chip.classList.add("attach-chip-pending");
+      chip.title = isImage ? "Расшифровка изображения — это занимает время"
+                           : "Разбираем файл";
+    } else if (att.transcript) {
+      // Расшифровка заменит картинку в следующих вопросах — пусть будет видно,
+      // что именно модель в ней прочитала, до отправки, а не после.
+      const mark = document.createElement("span");
+      mark.className = "attach-transcript-mark";
+      mark.textContent = "расшифровано";
+      mark.title = att.transcript;
+      chip.appendChild(mark);
+    }
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "attach-remove";
@@ -388,6 +413,7 @@ function renderAttachments() {
     remove.addEventListener("click", () => {
       pendingAttachments.splice(idx, 1);
       renderAttachments();
+      updateInputState();
     });
     chip.appendChild(remove);
     return chip;
@@ -738,7 +764,7 @@ function userActions() {
 // Сворачиваемый блок вложения в сообщении пользователя (§16):
 // спарсенный документ не «висит стеной», а открывается по клику.
 function attachmentBlock(att) {
-  if (att.image) {
+  if (att.image && !att.transcript) {
     const chip = document.createElement("div");
     chip.className = "attach-msg-chip";
     chip.textContent = `🖼 ${att.filename}`;
@@ -747,11 +773,14 @@ function attachmentBlock(att) {
   const details = document.createElement("details");
   details.className = "attach-doc";
   const summary = document.createElement("summary");
-  summary.textContent = `📄 ${att.filename}`;
+  // У картинки открывается не она сама (в переписке её нет), а расшифровка —
+  // то единственное, что от неё осталось и что видит модель дальше.
+  summary.textContent = att.image ? `🖼 ${att.filename} — расшифровка`
+                                  : `📄 ${att.filename}`;
   details.appendChild(summary);
   const body = document.createElement("div");
   body.className = "attach-doc-body";
-  body.textContent = att.text || "";
+  body.textContent = att.image ? att.transcript : (att.text || "");
   details.appendChild(body);
   return details;
 }
@@ -890,6 +919,11 @@ function updateInputState() {
   els.input.disabled = streaming;
   els.sendBtn.hidden = streaming;
   els.stopBtn.hidden = !streaming;
+  // Пока картинка расшифровывается, отправлять нечего: кнопка гаснет, но
+  // вопрос дописывать можно — на то расшифровка и снимается заранее.
+  const busyAttachment = pendingAttachments.some((a) => a.pending);
+  els.sendBtn.disabled = busyAttachment;
+  els.sendBtn.title = busyAttachment ? "Вложение обрабатывается" : "";
 }
 
 // Перерисовать живой ответ стрима в его DOM-узел (узел может быть откреплён,
@@ -1038,17 +1072,25 @@ async function continueGeneration() {
 // Перегенерировать последний ответ: удалить его вместе с породившим запросом
 // пользователя и отправить этот запрос заново (вложения не переносятся).
 // Вложения сохранённого сообщения — обратно в отправку.
-// Текст документов лежит в истории, а вот сами картинки не хранятся (§16):
-// восстановить их нечем, поэтому о потере говорим вслух, а не молча.
+// Текст документов лежит в истории; самих картинок нет (§16), от них осталась
+// расшифровка — её и переносим. Модель увидит не картинку, а пересказ: для
+// повторного ответа обычно достаточно, но сказать об этом надо вслух.
 function reusableAttachments(msg) {
   const saved = msg.attachments || [];
-  const docs = saved.filter((a) => a.text);
-  const lostImages = saved.filter((a) => a.image || (a.images && a.images.length));
-  if (lostImages.length) {
-    els.toast(`Картинки (${lostImages.map((a) => a.filename).join(", ")}) `
+  const blind = saved.filter((a) => a.image && a.transcript);
+  const lost = saved.filter((a) => a.image && !a.transcript);
+  if (blind.length) {
+    els.toast(`Картинки (${blind.map((a) => a.filename).join(", ")}) `
+      + "заменены расшифровкой — если её мало, приложите заново");
+  }
+  if (lost.length) {
+    els.toast(`Картинки (${lost.map((a) => a.filename).join(", ")}) `
       + "не восстанавливаются — приложите заново", true);
   }
-  return docs.map((a) => ({ filename: a.filename, text: a.text, images: [] }));
+  return saved
+    .filter((a) => a.text || a.transcript)
+    .map((a) => ({ filename: a.filename, text: a.text || "",
+                   transcript: a.transcript || "", images: [] }));
 }
 
 async function regenerateAnswer() {
@@ -1180,6 +1222,12 @@ async function sendMessage() {
   // В другом чате генерация может идти параллельно: параллелизм у llama.cpp.
   if ((!content && pendingAttachments.length === 0) || activeChatId === null
       || isStreaming(activeChatId)) return;
+  // Отправить картинку раньше, чем снята расшифровка, — значит потерять её
+  // содержимое во всех следующих вопросах: второй раз картинку уже не увидят.
+  if (pendingAttachments.some((a) => a.pending)) {
+    els.toast("Вложение ещё обрабатывается — секунду");
+    return;
+  }
 
   const chatId = activeChatId;
   const attachments = pendingAttachments;
@@ -1196,8 +1244,8 @@ async function submitTurn(chatId, content, attachments) {
   els.messages.appendChild(messageNode({
     role: "user",
     content,
-    attachments: attachments.map((a) => (a.images && a.images.length
-      ? { filename: a.filename, image: true }
+    attachments: attachments.map((a) => ((a.images && a.images.length) || a.transcript
+      ? { filename: a.filename, image: true, transcript: a.transcript || "" }
       : { filename: a.filename, text: a.text || "" })),
   }));
   // Пользователь отправил сообщение — прыгаем вниз и снова следим за стримом.
@@ -1228,6 +1276,7 @@ async function submitTurn(chatId, content, attachments) {
         enable_thinking: els.ctxThink.checked,
         attachments: attachments.map((a) => ({
           filename: a.filename, text: a.text || "", images: a.images || [],
+          transcript: a.transcript || "",
         })),
       }),
       signal: st.ac.signal,

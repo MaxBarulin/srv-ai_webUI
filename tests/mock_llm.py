@@ -77,12 +77,29 @@ async def props():
     return {"default_generation_settings": {"n_ctx": 8192}, "total_slots": 1}
 
 
+def _flatten(content) -> str:
+    """Текст сообщения, каким бы оно ни было — строкой или частями с картинками."""
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return content if isinstance(content, str) else ""
+
+
+def _image_count(messages: list[dict]) -> int:
+    return sum(1 for m in messages if isinstance(m.get("content"), list)
+               for p in m["content"]
+               if isinstance(p, dict) and p.get("type") == "image_url")
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
     messages = body.get("messages", [])
-    last_user = next(
-        (m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+    last_user = _flatten(next(
+        (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""))
+    # Расшифровка картинки (app/transcribe.py) — свой системный промпт,
+    # свой ответ: цитировать вопрос тут нечего, картинки у нас ненастоящие.
+    system = _flatten(messages[0]["content"]) if messages else ""
+    transcribing = "расшифровываешь изображения" in system
 
     if "ERROR500" in last_user:
         return JSONResponse({"error": "mock internal error"}, status_code=500)
@@ -107,6 +124,18 @@ async def chat_completions(request: Request):
             for text in REASONING_CHUNKS:
                 yield chunk({"reasoning_content": text})
                 await asyncio.sleep(2.0 if slow else 0.01)
+
+        if transcribing:
+            n = _image_count(messages)
+            if "TRANSCRIBE_EMPTY" in system:  # ветка «модель промолчала»
+                yield "data: [DONE]\n\n"
+                return
+            for text in ("РАСШИФРОВКА: ", f"изображений {n}, ",
+                         "на чертеже вал Ø40 мм, сталь 09Г2С."):
+                yield chunk({"content": text})
+                await asyncio.sleep(0.01)
+            yield "data: [DONE]\n\n"
+            return
 
         if emit_tool_call:
             name, args = trigger
