@@ -343,7 +343,7 @@ def test_chat_message_with_document_text(client, doc_user, monkeypatch):
     assert r.status_code == 200
     user_msg = captured[0][-1]
     assert "Технические требования к сварке" in user_msg["content"]
-    assert "[Документ: spec.txt]" in user_msg["content"]
+    assert "«spec.txt»" in user_msg["content"]
 
     # В истории текст документа хранится отдельным вложением (не «стеной» в сообщении)
     msgs = client.get(f"/api/chats/{chat_id}/messages").json()
@@ -357,7 +357,11 @@ def test_chat_message_with_document_text(client, doc_user, monkeypatch):
                 json={"content": "уточни", "use_tools": False})
     followup_history = captured[1]
     joined = " ".join(str(m["content"]) for m in followup_history)
-    assert "[Документ: spec.txt]" in joined
+    assert "«spec.txt»" in joined
+    # Подпись объясняет модели, что документ никуда не делся: без неё она
+    # на втором-третьем вопросе просит «пришлите таблицу», хотя таблица
+    # лежит у неё в контексте.
+    assert "остаётся доступным до конца разговора" in joined
     assert "Технические требования к сварке" in joined
 
 

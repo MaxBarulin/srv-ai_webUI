@@ -46,6 +46,22 @@ AUTO_TITLE_MAX_LEN = 60
 MAX_ATTACHMENT_CHARS = 60000
 
 
+def document_block(filename: str, text: str) -> str:
+    """Приложенный документ в том виде, в каком его читает модель.
+
+    Подпись говорящая, а не просто имя файла. Документ остаётся в том
+    сообщении, к которому его приложили, — то есть на втором-третьем вопросе
+    он оказывается далеко от текущего, и модель начинает просить «пришлите
+    таблицу», хотя таблица у неё перед глазами. Строка ниже стоит полтора
+    десятка токенов один раз и снимает ровно это недоразумение; двигать сам
+    текст ближе к вопросу дороже — он выпадет из KV-кэша и будет
+    пересчитываться каждый ход.
+    """
+    return (f"[Документ «{filename}» — текст приведён ниже целиком и остаётся "
+            f"доступным до конца разговора; просить прислать его заново не нужно]\n"
+            f"{text}")
+
+
 class CreateChatRequest(BaseModel):
     title: str = ""
     specialization_id: int | None = None
@@ -362,7 +378,8 @@ async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
                     if att.get("image"):
                         text += f"\n[приложено изображение: {att.get('filename', '')}]"
                     elif att.get("text"):
-                        text += f"\n\n[Документ: {att.get('filename', 'файл')}]\n{att['text']}"
+                        text += "\n\n" + document_block(
+                            att.get("filename", "файл"), att["text"])
             elif row["role"] == "assistant" and isinstance(meta, list):
                 # Трассу расчёта возвращаем модели: сама она на следующем ходу
                 # видит лишь свой текст, и если ответила скупо, числа для неё
@@ -452,7 +469,7 @@ async def send_message(
             text = text[:remaining]
             doc_warnings.append(f"документ «{att.filename}» обрезан по лимиту контекста")
         remaining = max(0, remaining - len(text))
-        doc_texts.append(f"[Документ: {att.filename}]\n{text}")
+        doc_texts.append(document_block(att.filename, text))
         attachments_meta.append({"filename": att.filename, "text": text})
 
     if pii_total:

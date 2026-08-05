@@ -1037,6 +1037,20 @@ async function continueGeneration() {
 
 // Перегенерировать последний ответ: удалить его вместе с породившим запросом
 // пользователя и отправить этот запрос заново (вложения не переносятся).
+// Вложения сохранённого сообщения — обратно в отправку.
+// Текст документов лежит в истории, а вот сами картинки не хранятся (§16):
+// восстановить их нечем, поэтому о потере говорим вслух, а не молча.
+function reusableAttachments(msg) {
+  const saved = msg.attachments || [];
+  const docs = saved.filter((a) => a.text);
+  const lostImages = saved.filter((a) => a.image || (a.images && a.images.length));
+  if (lostImages.length) {
+    els.toast(`Картинки (${lostImages.map((a) => a.filename).join(", ")}) `
+      + "не восстанавливаются — приложите заново", true);
+  }
+  return docs.map((a) => ({ filename: a.filename, text: a.text, images: [] }));
+}
+
 async function regenerateAnswer() {
   if (activeChatId === null || isStreaming(activeChatId)) return;
   const chatId = activeChatId;
@@ -1053,13 +1067,14 @@ async function regenerateAnswer() {
   }
   if (ui < 0) { els.toast("Не найден запрос для перегенерации", true); return; }
   const userContent = messages[ui].content;
+  const userAttachments = reusableAttachments(messages[ui]);
   try {
     // удаляем всё, начиная с запроса пользователя (запрос + ответ и всё после)
     for (let i = messages.length - 1; i >= ui; i--) {
       await api(`/api/chats/${chatId}/messages/${messages[i].id}`, { method: "DELETE" });
     }
     if (chatId === activeChatId) await loadMessages();
-    await submitTurn(chatId, userContent, []);
+    await submitTurn(chatId, userContent, userAttachments);
   } catch (e) {
     els.toast(e.detail || "Не удалось перегенерировать", true);
   }
@@ -1124,12 +1139,13 @@ function startEditUserMessage(msgEl, msgId) {
       const messages = await api(`/api/chats/${chatId}/messages`);
       const idx = messages.findIndex((m) => m.id === msgId);
       if (idx < 0) { close(); return; }
+      const kept = reusableAttachments(messages[idx]);
       // удалить этот запрос и всё, что после него
       for (let i = messages.length - 1; i >= idx; i--) {
         await api(`/api/chats/${chatId}/messages/${messages[i].id}`, { method: "DELETE" });
       }
       if (chatId === activeChatId) await loadMessages();
-      await submitTurn(chatId, text, []);
+      await submitTurn(chatId, text, kept);
     } catch (e) {
       els.toast(e.detail || "Не удалось изменить запрос", true);
       close();
