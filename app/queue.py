@@ -21,7 +21,14 @@ from collections import deque
 from collections.abc import AsyncIterator
 
 POLL_INTERVAL = 0.3       # как часто проверять/обновлять позицию, сек
-QUEUE_WAIT_TIMEOUT = 300  # максимальное ожидание места (сек)
+# Максимальное ожидание места. Ориентир — не «сколько не жалко ждать», а
+# сколько может длиться ОДИН ответ: на CPU с длинным размышлением это 3–4
+# минуты. Прежние 300 с означали, что третий в очереди получал «превышено
+# время ожидания» просто потому, что впереди два обычных длинных ответа.
+QUEUE_WAIT_TIMEOUT = 900
+# Как часто повторять позицию, даже если она не изменилась. Без этого поток
+# молчит всё время ожидания, и обратный прокси вправе закрыть его как простой.
+HEARTBEAT_EVERY = 15.0    # сек
 
 
 class QueueTimeout(Exception):
@@ -42,14 +49,17 @@ class Ticket:
         Ничего не отдаёт, если очередь свободна и запрос обрабатывается сразу.
         """
         elapsed = 0.0
+        since_beat = 0.0
         last_reported: int | None = None
         while not self._queue._can_start(self):
             position = self._queue._position(self)
-            if position != last_reported:
+            if position != last_reported or since_beat >= HEARTBEAT_EVERY:
                 yield position
                 last_reported = position
+                since_beat = 0.0
             await asyncio.sleep(POLL_INTERVAL)
             elapsed += POLL_INTERVAL
+            since_beat += POLL_INTERVAL
             if elapsed >= timeout:
                 raise QueueTimeout(
                     "Превышено время ожидания в очереди к модели, попробуйте позже")

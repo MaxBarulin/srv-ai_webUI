@@ -320,6 +320,48 @@ def test_queue_serializes_and_reports_position():
     assert pos_c and pos_c[0] >= 1
 
 
+def test_queue_wait_outlives_one_long_answer():
+    """Ждать в очереди можно дольше, чем длится один ответ.
+
+    На CPU ответ с длинным размышлением занимает 3–4 минуты. При прежнем
+    таймауте в 300 с третий в очереди получал «превышено время ожидания»
+    просто потому, что впереди были два обычных длинных ответа.
+    """
+    from app.queue import QUEUE_WAIT_TIMEOUT
+    самый_долгий_ответ = 240        # 4820 токенов при 20 ток/с
+    assert QUEUE_WAIT_TIMEOUT >= самый_долгий_ответ * 3
+
+
+def test_queue_repeats_position_as_heartbeat():
+    """Пока ждём, позиция повторяется — иначе поток молчит и обратный прокси
+    вправе закрыть его как простаивающий."""
+    async def scenario():
+        import app.queue as qmod
+        q = qmod.LLMQueue()
+        blocker = q.enqueue()
+        async for _ in blocker.wait_turn(timeout=5):
+            pass
+        waiter = q.enqueue()
+        beats = []
+        orig = qmod.HEARTBEAT_EVERY
+        qmod.HEARTBEAT_EVERY = 0.4      # ускоряем, чтобы тест не ждал 15 с
+        try:
+            async def collect():
+                async for pos in waiter.wait_turn(timeout=5):
+                    beats.append(pos)
+            task = asyncio.create_task(collect())
+            await asyncio.sleep(1.6)
+            task.cancel()
+        finally:
+            qmod.HEARTBEAT_EVERY = orig
+        return beats
+
+    beats = asyncio.run(scenario())
+    # позиция не менялась, но повторялась: первый отчёт + минимум два удара
+    assert len(beats) >= 3, beats
+    assert set(beats) == {1}, beats
+
+
 def test_queue_timeout():
     async def scenario():
         q = LLMQueue()
