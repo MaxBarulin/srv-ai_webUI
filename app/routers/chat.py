@@ -21,7 +21,6 @@ from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, get_server_context_size, stream_chat
 from app.metrics import metrics
 from app.pii import mask_text
-from app.queue import QueueTimeout, llm_queue
 from app.rag import RAGError, context_message, fetch_context
 from app.tools import (
     CALC_METHOD_TOOLS,
@@ -603,17 +602,11 @@ async def send_message(
         # поэтому «сколько занимает чат» надо считать именно отсюда.
         first_prompt_tokens = 0
         server_stats_seen = False
-        ticket = llm_queue.enqueue()
         try:
-            # Ждём своей очереди к модели, отдавая честную позицию (§15)
-            try:
-                async for position in ticket.wait_turn():
-                    yield _sse("queued", {"position": position})
-            except QueueTimeout as exc:
-                yield _sse("error", {"detail": str(exc)})
-                metrics.record_request(success=False)
-                return
-            yield _sse("queue_ready", {})
+            # Своей очереди не держим: параллелизм задаёт сама llama.cpp
+            # (-np) и её планировщик. Приложение об этом числе не знает и
+            # знать не должно — иначе при смене железа или -np пришлось бы
+            # править и его тоже.
             gen_start = time.monotonic()
 
             if pii_total:
@@ -743,7 +736,6 @@ async def send_message(
             finished = True
             had_error = True
         finally:
-            ticket.release()
             # Метрики (§13): предпочитаем счётчики самого сервера (llama.cpp
             # usage/timings — тот же способ, что в её web UI). Fallback — грубая
             # оценка по символам (включая reasoning) за время генерации.
@@ -888,16 +880,7 @@ async def continue_generation(
         total_gen_seconds = 0.0
         last_prompt_tokens = 0
         server_stats_seen = False
-        ticket = llm_queue.enqueue()
         try:
-            try:
-                async for position in ticket.wait_turn():
-                    yield _sse("queued", {"position": position})
-            except QueueTimeout as exc:
-                yield _sse("error", {"detail": str(exc)})
-                metrics.record_request(success=False)
-                return
-            yield _sse("queue_ready", {})
             gen_start = time.monotonic()
 
             async for kind, text in stream_chat(
@@ -921,7 +904,6 @@ async def continue_generation(
             finished = True
             had_error = True
         finally:
-            ticket.release()
             if gen_start is not None:
                 if server_stats_seen and total_completion and total_gen_seconds:
                     metrics.record_request(success=not had_error,

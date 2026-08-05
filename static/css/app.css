@@ -716,9 +716,6 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 :root[data-theme="dark"] .tool-chip.done { border-left-color: #66bb6a; color: #81c784; }
 .tool-chip .tool-confirm-btn { flex-shrink: 0; }
 
-/* Очередь к модели (§15) */
-.queue-note { text-align: center; color: var(--osk-slate); }
-
 /* Создание чата со специализацией (§15) */
 .chat-new-row { padding: 12px 16px 10px; display: flex; flex-direction: column; gap: 8px; }
 .chat-new-row .chat-new { margin: 0; }

@@ -6,7 +6,7 @@ let chats = [];
 let activeChatId = null;
 // Состояние стриминга — по одному на чат. Инференс в чате продолжается, даже
 // если пользователь ушёл в другой чат; кнопки/панель относятся к активному чату.
-// chatId -> { ac, live, liveBody, liveReasoning, queueNote, liveStats,
+// chatId -> { ac, live, liveBody, liveReasoning, liveStats,
 //             reasoningText, contentText, messageId, genStart }
 const streams = new Map();
 let pendingAttachments = []; // разобранные вложения для следующего сообщения
@@ -930,7 +930,7 @@ function renderLive(st, scroll = false) {
 function updateLiveStats(st) {
   if (!st.liveStats) return;
   // Таймер тикает от нажатия «Отправить» (st.sendStart) — даже пока идёт
-  // очередь/размышления и токенов ещё нет.
+  // размышления и токенов ещё нет.
   const wall = st.sendStart ? (performance.now() - st.sendStart) / 1000 : 0;
   const chars = (st.reasoningText || "").length + (st.contentText || "").length;
   if (!chars || !st.genStart) {
@@ -960,24 +960,21 @@ function finishLive(st) {
 function buildLive(chatId) {
   const live = document.createElement("div");
   live.className = "msg msg-assistant";
-  const queueNote = document.createElement("div");
-  queueNote.className = "msg-note queue-note";
-  queueNote.hidden = true;
   const liveReasoning = reasoningBlock("", false);
   liveReasoning.hidden = true;
   const liveBody = document.createElement("div");
   liveBody.className = "msg-body";
   const liveStats = document.createElement("div");
   liveStats.className = "msg-live-stats";
-  live.append(queueNote, liveReasoning, liveBody, liveStats);
+  live.append(liveReasoning, liveBody, liveStats);
   els.messages.appendChild(live);
 
   const st = {
-    chatId, ac: new AbortController(), live, liveBody, liveReasoning, queueNote,
+    chatId, ac: new AbortController(), live, liveBody, liveReasoning,
     liveStats, reasoningText: "", contentText: "", messageId: null,
     genStart: 0, sendStart: performance.now(), reasoningFollow: true,
   };
-  // Плавно тикающий таймер «от отправки», даже пока идёт очередь/размышления
+  // Плавно тикающий таймер «от отправки», даже пока идут размышления
   st.timer = setInterval(() => updateLiveStats(st), 250);
   liveReasoning.querySelector(".reasoning-body").addEventListener("scroll", (e) => {
     st.reasoningFollow = isAtBottom(e.currentTarget);
@@ -991,7 +988,6 @@ async function continueGeneration() {
   if (activeChatId === null || isStreaming(activeChatId)) return;
   const chatId = activeChatId;
   const st = buildLive(chatId);
-  const { queueNote } = st;
   streams.set(chatId, st);
   updateInputState();
   renderChatList();
@@ -1013,12 +1009,7 @@ async function continueGeneration() {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
-        if (event === "queued") {
-          queueNote.hidden = false;
-          queueNote.textContent = `В очереди: ${data.position}…`;
-        } else if (event === "queue_ready") {
-          queueNote.hidden = true;
-        } else if (event === "reasoning") {
+        if (event === "reasoning") {
           if (!st.genStart) st.genStart = performance.now();
           st.reasoningText += data.text;
         } else if (event === "content") {
@@ -1170,7 +1161,7 @@ function parseSseBuffer(buffer, onEvent) {
 async function sendMessage() {
   const content = els.input.value.trim();
   // Отправлять можно, только если в ЭТОМ чате сейчас нет генерации.
-  // В другом чате генерация может идти параллельно — бэкенд поставит в очередь.
+  // В другом чате генерация может идти параллельно: параллелизм у llama.cpp.
   if ((!content && pendingAttachments.length === 0) || activeChatId === null
       || isStreaming(activeChatId)) return;
 
@@ -1197,7 +1188,7 @@ async function submitTurn(chatId, content, attachments) {
   scrollToBottom(true);
 
   const st = buildLive(chatId);
-  const { live, liveBody, queueNote } = st;
+  const { live, liveBody } = st;
   streams.set(chatId, st);
   updateInputState();
   renderChatList(); // показать индикатор генерации в списке
@@ -1239,12 +1230,7 @@ async function submitTurn(chatId, content, attachments) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = parseSseBuffer(buffer + decoder.decode(value, { stream: true }), (event, data) => {
-        if (event === "queued") {
-          queueNote.hidden = false;
-          queueNote.textContent = `В очереди: ${data.position}…`;
-        } else if (event === "queue_ready") {
-          queueNote.hidden = true;
-        } else if (event === "reasoning") {
+        if (event === "reasoning") {
           if (!st.genStart) st.genStart = performance.now();
           st.reasoningText += data.text;
         } else if (event === "content") {

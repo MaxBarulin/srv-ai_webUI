@@ -1,7 +1,6 @@
-"""Stage 6 tests (§15): специализации, обратная связь, очередь, примеры, масштаб."""
+"""Stage 6 tests (§15): специализации, обратная связь, примеры, масштаб."""
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 
 import httpx
@@ -9,7 +8,6 @@ import pytest
 
 from app import llm as llm_module
 from app.config import settings
-from app.queue import LLMQueue
 from tests.conftest import login_as
 from tests.mock_llm import app as mock_llm_app
 from tests.test_chat import _parse_sse
@@ -281,101 +279,3 @@ def test_theme_setting_persisted_per_user(client, ergo_user):
 
 
 # --- Очередь ---
-
-def test_queue_serializes_and_reports_position():
-    async def scenario():
-        q = LLMQueue()
-        order = []
-
-        async def worker(name, hold):
-            ticket = q.enqueue()
-            positions = []
-            async for pos in ticket.wait_turn(timeout=5):
-                positions.append(pos)
-            order.append(("start", name))
-            await asyncio.sleep(hold)
-            order.append(("end", name))
-            ticket.release()
-            return positions
-
-        # a стартует сразу; b и c ждут
-        t_a = asyncio.create_task(worker("a", 0.2))
-        await asyncio.sleep(0.05)
-        t_b = asyncio.create_task(worker("b", 0.1))
-        await asyncio.sleep(0.05)
-        t_c = asyncio.create_task(worker("c", 0.1))
-
-        pos_a, pos_b, pos_c = await asyncio.gather(t_a, t_b, t_c)
-        return order, pos_a, pos_b, pos_c
-
-    order, pos_a, pos_b, pos_c = asyncio.run(scenario())
-
-    # Строго последовательная обработка: никакие два не пересекаются
-    assert order == [("start", "a"), ("end", "a"),
-                     ("start", "b"), ("end", "b"),
-                     ("start", "c"), ("end", "c")]
-    # a обработан сразу (без ожидания), b и c видели положительную позицию
-    assert pos_a == []
-    assert pos_b and pos_b[0] >= 1
-    assert pos_c and pos_c[0] >= 1
-
-
-def test_queue_wait_outlives_one_long_answer():
-    """Ждать в очереди можно дольше, чем длится один ответ.
-
-    На CPU ответ с длинным размышлением занимает 3–4 минуты. При прежнем
-    таймауте в 300 с третий в очереди получал «превышено время ожидания»
-    просто потому, что впереди были два обычных длинных ответа.
-    """
-    from app.queue import QUEUE_WAIT_TIMEOUT
-    самый_долгий_ответ = 240        # 4820 токенов при 20 ток/с
-    assert QUEUE_WAIT_TIMEOUT >= самый_долгий_ответ * 3
-
-
-def test_queue_repeats_position_as_heartbeat():
-    """Пока ждём, позиция повторяется — иначе поток молчит и обратный прокси
-    вправе закрыть его как простаивающий."""
-    async def scenario():
-        import app.queue as qmod
-        q = qmod.LLMQueue()
-        blocker = q.enqueue()
-        async for _ in blocker.wait_turn(timeout=5):
-            pass
-        waiter = q.enqueue()
-        beats = []
-        orig = qmod.HEARTBEAT_EVERY
-        qmod.HEARTBEAT_EVERY = 0.4      # ускоряем, чтобы тест не ждал 15 с
-        try:
-            async def collect():
-                async for pos in waiter.wait_turn(timeout=5):
-                    beats.append(pos)
-            task = asyncio.create_task(collect())
-            await asyncio.sleep(1.6)
-            task.cancel()
-        finally:
-            qmod.HEARTBEAT_EVERY = orig
-        return beats
-
-    beats = asyncio.run(scenario())
-    # позиция не менялась, но повторялась: первый отчёт + минимум два удара
-    assert len(beats) >= 3, beats
-    assert set(beats) == {1}, beats
-
-
-def test_queue_timeout():
-    async def scenario():
-        q = LLMQueue()
-        blocker = q.enqueue()
-        # blocker занимает место и не освобождает
-        async for _ in blocker.wait_turn(timeout=5):
-            pass
-        waiter = q.enqueue()
-        from app.queue import QueueTimeout
-        try:
-            async for _ in waiter.wait_turn(timeout=0.5):
-                pass
-        except QueueTimeout:
-            return True
-        return False
-
-    assert asyncio.run(scenario()) is True
