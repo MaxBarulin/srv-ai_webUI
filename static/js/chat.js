@@ -320,19 +320,31 @@ async function useExample(text) {
 // полноценная генерация — десятки секунд. Поэтому вложение появляется в
 // списке сразу, помеченным как обрабатываемое: кнопку не блокируем (можно
 // приложить следующий файл), но отправку до готовности не пускаем.
-async function uploadAttachment(file) {
-  if (!file) return;
+//
+// Загрузки идут по очереди: вставка трёх картинок из буфера запускала три
+// расшифровки разом, то есть три параллельные генерации 35B на одного
+// человека. Сервер такое тоже не примет (MAX_CONCURRENT_PER_USER).
+let uploadChain = Promise.resolve();
+
+function uploadAttachment(file) {
+  if (!file) return uploadChain;
   // То же число, что MAX_ATTACHMENTS на сервере (app/routers/chat.py).
   // Проверяем и здесь: расшифровка картинки — это полноценная генерация,
   // и тратить её на файл, который сервер всё равно отвергнет, незачем.
   if (pendingAttachments.length >= 6) {
     els.toast("Не больше 6 вложений в одном сообщении", true);
-    return;
+    return uploadChain;
   }
   const entry = { filename: file.name || "файл", pending: true, images: [] };
   pendingAttachments.push(entry);
   renderAttachments();
   updateInputState();
+  uploadChain = uploadChain.then(() => sendAttachment(file, entry));
+  return uploadChain;
+}
+
+async function sendAttachment(file, entry) {
+  if (pendingAttachments.indexOf(entry) < 0) return;  // убрали, пока стоял в очереди
   try {
     const form = new FormData();
     form.append("file", file);

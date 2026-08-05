@@ -39,8 +39,17 @@ class CalcError(ValueError):
 # round2 добавлен отдельно: округление «как в школе» (0.5 вверх), потому что
 # встроенный round() округляет к чётному и на нормах времени это удивляет.
 
+MAX_ROUND_DIGITS = 15        # больше знаков, чем несёт double, — смысла нет
+
+
 def _round_half_up(value: float, digits: int = 0) -> float:
-    factor = 10 ** int(digits)
+    # Знаки округления приходят из формулы, то есть от модели. Без потолка
+    # round_half_up(1, 100000000) молча просит посчитать 10**100000000 —
+    # стомиллионзначное число, и процесс уходит в своп на несколько минут.
+    digits = int(digits)
+    if abs(digits) > MAX_ROUND_DIGITS:
+        raise ValueError(f"число знаков округления больше {MAX_ROUND_DIGITS}")
+    factor = 10 ** digits
     return math.floor(abs(value) * factor + 0.5) / factor * (1 if value >= 0 else -1)
 
 
@@ -124,11 +133,17 @@ def _eval_node(node: ast.AST, names: dict[str, float]):
         if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0:
             raise CalcError("Деление на ноль")
         try:
-            return handler(left, right)
+            value = handler(left, right)
         except OverflowError:
             raise CalcError("Переполнение при вычислении")
         except ValueError as exc:
             raise CalcError(f"Недопустимая операция: {exc}")
+        # Предел проверяем на КАЖДОМ шаге, а не только на итоге. Ограничения
+        # одного показателя мало: в (((10**64)**64)**64)**64 каждый показатель
+        # равен 64 и проходит проверку, а основание тем временем растёт до
+        # шестнадцати миллионов знаков — четырнадцать секунд счёта, и это
+        # только четыре скобки. С проверкой здесь взрыв гасится на втором шаге.
+        return _check_number(value, "промежуточный результат")
 
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name):

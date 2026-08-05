@@ -580,3 +580,78 @@ def test_transcript_masked_by_pii_filter(client, doc_user, monkeypatch):
     })
     sent = json.dumps(captured[0][-1], ensure_ascii=False)
     assert "999 123-45-67" not in sent
+
+
+# --- Устойчивость разбора (баг-хантинг 05.08) ---
+
+def test_huge_canvas_image_rejected():
+    """PNG на 137 КБ разворачивается в холст 12000×12000 — 800 МБ памяти и
+    семь секунд счёта. Отказ обязан прийти до распаковки, а не после."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("L", (12000, 12000), 0).save(buf, format="PNG", compress_level=9)
+    data = buf.getvalue()
+    assert len(data) < 1024 * 1024  # файл крошечный — в лимит загрузки проходит
+    with pytest.raises(DocumentError, match="слишком велико"):
+        parse_upload("bomb.png", "image/png", data)
+
+
+def test_normal_image_still_parsed():
+    doc = parse_upload("photo.png", "image/png", _png_bytes(size=(1200, 800)))
+    assert doc.images and doc.images[0].startswith("data:image/png;base64,")
+
+
+def test_broken_office_file_is_400_not_500(client, doc_user):
+    """Чужие парсеры на битом файле бросают что придётся. Наружу это уходило
+    пятисоткой — то есть ошибкой сервера, а не документа."""
+    for name, mime in (("broken.xlsx", "application/vnd.openxmlformats-officedocument"
+                                       ".spreadsheetml.sheet"),
+                       ("broken.docx", "application/vnd.openxmlformats-officedocument"
+                                       ".wordprocessingml.document")):
+        broken = b"PK\x03\x04" + "мусор".encode()
+        r = client.post("/api/attachments", files={"file": (name, broken, mime)})
+        assert r.status_code == 400, f"{name}: {r.status_code}"
+        assert r.json()["detail"]
+
+
+def test_office_zip_bomb_rejected():
+    """Защита от zip-бомб была только у docx; xlsx разбирал тот же процесс."""
+    payload = b"A" * (300 * 1024 * 1024)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        zf.writestr("xl/sharedStrings.xml", payload)
+    data = buf.getvalue()
+    assert len(data) < 1024 * 1024
+    for name in ("bomb.xlsx", "bomb.docx"):
+        with pytest.raises(DocumentError, match="распакованный размер"):
+            parse_upload(name, "application/octet-stream", data)
+
+
+def test_transcription_limited_per_user(client, doc_user, monkeypatch):
+    """Загрузка картинки стала стоить генерации 35B — значит, ей нужен предел,
+    иначе десяток PNG занимает модель, ничего не отправляя в чат."""
+    import asyncio
+
+    from app import transcribe as tr
+
+    async def slow(*a, **kw):
+        await asyncio.sleep(5)
+        yield "content", "…"  # pragma: no cover
+
+    monkeypatch.setattr(tr, "stream_chat", slow)
+    uid = client.get("/api/me").json()["id"]
+    monkeypatch.setattr(tr, "_in_flight", {uid: tr.MAX_CONCURRENT_PER_USER})
+    r = client.post("/api/attachments", files={"file": ("x.png", _png_bytes(), "image/png")})
+    assert r.status_code == 429
+    assert "не больше" in r.json()["detail"]
+
+
+def test_transcription_counter_released(client, doc_user):
+    """Счётчик обязан освобождаться, иначе после трёх картинок за сеанс
+    загрузка встанет навсегда."""
+    from app import transcribe as tr
+    uid = client.get("/api/me").json()["id"]
+    for _ in range(tr.MAX_CONCURRENT_PER_USER + 2):
+        assert client.post("/api/attachments",
+                           files={"file": ("x.png", _png_bytes(), "image/png")}).status_code == 200
+    assert tr._in_flight.get(uid, 0) == 0

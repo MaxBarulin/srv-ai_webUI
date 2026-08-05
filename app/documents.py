@@ -47,6 +47,14 @@ CHARS_PER_TOKEN = 3          # грубая оценка длины (§16)
 IMAGE_TOKEN_BUDGET = 800     # ориентировочный бюджет токенов на изображение
 IMAGE_MAX_DIM = 2000         # макс. сторона изображения перед отправкой модели
 
+# Предел числа пикселей ДО распаковки. PNG на 137 КБ разворачивается в холст
+# 12000×12000 — это 814 МБ в памяти и семь секунд счёта, за которые процесс не
+# обслуживает больше никого. Собственная защита Pillow (MAX_IMAGE_PIXELS) тут не
+# спасает: до двойного порога она только предупреждает, а дальше уже поздно.
+# 60 Мпикс — это 8000×7500, вчетверо больше, чем мы всё равно отдадим модели
+# (IMAGE_MAX_DIM), так что ни один настоящий чертёж в предел не упрётся.
+IMAGE_MAX_PIXELS = 60_000_000
+
 
 class DocumentError(Exception):
     """Ошибка обработки документа — понятный текст для пользователя."""
@@ -115,15 +123,26 @@ def _csv_to_markdown(data: bytes) -> str:
     return "\n".join(lines)
 
 
+def _check_zip_bomb(data: bytes) -> None:
+    """Суммарный распакованный размер офисного файла (docx/xlsx — это zip).
+
+    Проверять обязательно оба формата: сжатый на мегабайт xlsx разворачивается
+    в гигабайты sharedStrings, и разбирает его тот же единственный процесс,
+    который в это время обслуживает весь завод.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total = sum(info.file_size for info in zf.infolist())
+    except zipfile.BadZipFile as exc:
+        raise DocumentError("Файл повреждён или не является документом Office") from exc
+    if total > DOCX_MAX_UNCOMPRESSED:
+        raise DocumentError("Документ отклонён: слишком большой распакованный размер")
+
+
 def _parse_docx(data: bytes) -> str:
     import docx  # python-docx
 
-    # Защита от zip-бомб: проверяем суммарный распакованный размер
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        total = sum(info.file_size for info in zf.infolist())
-        if total > DOCX_MAX_UNCOMPRESSED:
-            raise DocumentError("Документ отклонён: слишком большой распакованный размер")
-
+    _check_zip_bomb(data)
     document = docx.Document(io.BytesIO(data))
     parts: list[str] = []
     for para in document.paragraphs:
@@ -144,6 +163,7 @@ def _parse_docx(data: bytes) -> str:
 def _parse_xlsx(data: bytes) -> tuple[str, list[str]]:
     import openpyxl
 
+    _check_zip_bomb(data)
     wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     warnings: list[str] = []
     blocks: list[str] = []
@@ -177,6 +197,17 @@ def _image_to_data_url(data: bytes) -> str:
 
     try:
         with Image.open(io.BytesIO(data)) as img:
+            # Размер читается из заголовка, до распаковки: отказать надо ДО
+            # того, как холст будет выделен, иначе проверять уже нечего.
+            width, height = img.size
+            if width * height > IMAGE_MAX_PIXELS:
+                raise DocumentError(
+                    f"Изображение {width}×{height} слишком велико "
+                    f"({width * height // 1_000_000} Мпикс) — уменьшите его перед загрузкой")
+            # У JPEG декодер умеет сразу отдать уменьшенное — экономит и память,
+            # и время на больших сканах. Для остальных форматов вызов ничего
+            # не делает.
+            img.draft("RGB", (IMAGE_MAX_DIM, IMAGE_MAX_DIM))
             img.load()
             rgb = img.convert("RGB")
             if max(rgb.size) > IMAGE_MAX_DIM:
@@ -184,6 +215,8 @@ def _image_to_data_url(data: bytes) -> str:
                 rgb = rgb.resize((int(rgb.width * ratio), int(rgb.height * ratio)))
             out = io.BytesIO()
             rgb.save(out, format="PNG")
+    except DocumentError:
+        raise
     except Exception as exc:  # noqa: BLE001 — любой сбой декодера = отказ
         raise DocumentError(f"Не удалось обработать изображение: {exc}") from exc
     b64 = base64.b64encode(out.getvalue()).decode("ascii")
@@ -321,18 +354,28 @@ def parse_upload(filename: str, content_type: str, data: bytes,
     ext = validate(filename, content_type, len(data))
     doc = ParsedDocument(filename=filename)
 
-    if ext in (".txt", ".md"):
-        doc.text = _decode_text(data)
-    elif ext == ".csv":
-        doc.text = _csv_to_markdown(data)
-    elif ext == ".docx":
-        doc.text = _parse_docx(data)
-    elif ext == ".xlsx":
-        doc.text, doc.warnings = _parse_xlsx(data)
-    elif ext in (".png", ".jpg", ".jpeg"):
-        doc.images = [_image_to_data_url(data)]
-    elif ext == ".pdf":
-        _parse_pdf(data, doc, pdf_mode)
+    # Чужие парсеры на битом файле бросают что придётся — IndexError из
+    # openpyxl, KeyError из python-docx, ошибки XML. Наружу такое уходило
+    # пятисоткой: пользователь видел «Ошибка 500», а в журнале копилась
+    # трасса. Любой сбой разбора — это ошибка документа, а не сервера.
+    try:
+        if ext in (".txt", ".md"):
+            doc.text = _decode_text(data)
+        elif ext == ".csv":
+            doc.text = _csv_to_markdown(data)
+        elif ext == ".docx":
+            doc.text = _parse_docx(data)
+        elif ext == ".xlsx":
+            doc.text, doc.warnings = _parse_xlsx(data)
+        elif ext in (".png", ".jpg", ".jpeg"):
+            doc.images = [_image_to_data_url(data)]
+        elif ext == ".pdf":
+            _parse_pdf(data, doc, pdf_mode)
+    except DocumentError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — сбой чужого парсера, не наш отказ
+        raise DocumentError(
+            f"Не удалось разобрать файл «{filename}»: {type(exc).__name__}") from exc
 
     if not doc.text.strip() and not doc.images:
         raise DocumentError("Из файла не извлечено ни текста, ни изображений")

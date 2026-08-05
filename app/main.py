@@ -77,8 +77,13 @@ async def security_headers_and_csrf(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     # style-src 'unsafe-inline' — только для инлайн-стилей KaTeX (формулы);
     # скрипты по-прежнему строго 'self', пользовательский HTML экранируется.
+    # base-uri, form-action, object-src и frame-ancestors из default-src НЕ
+    # выводятся — их приходится задавать отдельно, иначе они не ограничены
+    # вовсе: <base href> увёл бы все относительные ссылки на чужой хост.
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; style-src 'self' 'unsafe-inline'")
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'; "
+        "frame-ancestors 'none'")
     return response
 
 

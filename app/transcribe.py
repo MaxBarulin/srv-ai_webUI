@@ -20,6 +20,21 @@ from __future__ import annotations
 from app.config import settings
 from app.llm import LLMError, stream_chat
 
+# Загрузка картинки стала стоить полноценной генерации 35B. Раньше она была
+# дешёвой, и никаких ограничений на неё не было — теперь скриптом из десятка
+# крошечных PNG можно занять модель целиком, ничего не отправляя в чат.
+# Три штуки на пользователя: столько же, сколько можно вставить из буфера за
+# раз, и вкладок с запасом. Ограничение именно на пользователя, а не общее:
+# сколько запросов держать в работе, решает планировщик llama.cpp, своей
+# очереди мы не заводим.
+MAX_CONCURRENT_PER_USER = 3
+_in_flight: dict[int, int] = {}
+
+
+class TranscribeBusy(Exception):
+    """Пользователь уже расшифровывает столько картинок, сколько разрешено."""
+
+
 TRANSCRIBE_SYSTEM = (
     "Ты расшифровываешь изображения для инженеров судостроительного завода. "
     "Твой пересказ — единственное, что останется от картинки в переписке: "
@@ -45,7 +60,8 @@ MULTI_IMAGE_HINT = (
 )
 
 
-async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]:
+async def transcribe_images(user_id: int, filename: str,
+                            images: list[str]) -> tuple[str, str]:
     """Расшифровать картинки одного вложения.
 
     Все картинки вложения уходят одним запросом: у PDF в режиме «картинками»
@@ -55,9 +71,29 @@ async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]
     Возвращает (расшифровка, предупреждение). Обе строки могут быть пустыми:
     неудача расшифровки не должна ронять загрузку файла — картинку всё равно
     можно отправить, просто в следующих ходах от неё останется одно имя.
+
+    Бросает TranscribeBusy, если пользователь уже занял свой лимит.
     """
     if not images or not settings.image_transcribe:
         return "", ""
+    # Счётчик увеличиваем без единого await между проверкой и записью —
+    # иначе между ними успеет вклиниться соседняя корутина.
+    if _in_flight.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
+        raise TranscribeBusy(
+            f"Одновременно расшифровывается не больше {MAX_CONCURRENT_PER_USER} "
+            f"изображений — дождитесь загрузки предыдущих")
+    _in_flight[user_id] = _in_flight.get(user_id, 0) + 1
+    try:
+        return await _run(filename, images)
+    finally:
+        left = _in_flight.get(user_id, 1) - 1
+        if left > 0:
+            _in_flight[user_id] = left
+        else:
+            _in_flight.pop(user_id, None)
+
+
+async def _run(filename: str, images: list[str]) -> tuple[str, str]:
     prompt = TRANSCRIBE_PROMPT
     if len(images) > 1:
         prompt += MULTI_IMAGE_HINT.format(count=len(images))

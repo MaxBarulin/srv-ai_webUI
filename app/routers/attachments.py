@@ -13,11 +13,12 @@ Endpoint без сохранения состояния: файл парситс
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app.auth import get_current_user
 from app.config import settings
 from app.documents import DocumentError, parse_upload
-from app.transcribe import transcribe_images
+from app.transcribe import TranscribeBusy, transcribe_images
 
 router = APIRouter(prefix="/api", tags=["attachments"])
 
@@ -34,12 +35,19 @@ async def upload_attachment(
         raise HTTPException(status_code=413, detail=f"Файл больше {settings.max_upload_mb} МБ")
     if pdf_mode not in ("vision", "text", "auto"):
         pdf_mode = "vision"
+    # Разбор — чистый счёт: Pillow, растеризация PDF, распаковка zip. В event
+    # loop он вставал колом на секунды, и всё это время сервер не отвечал
+    # НИКОМУ — процесс-то один на весь завод. Уводим в поток.
     try:
-        doc = parse_upload(file.filename or "file", file.content_type or "", data,
-                           pdf_mode=pdf_mode)
+        doc = await run_in_threadpool(
+            parse_upload, file.filename or "file", file.content_type or "", data,
+            pdf_mode=pdf_mode)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    transcript, warning = await transcribe_images(doc.filename, doc.images)
+    try:
+        transcript, warning = await transcribe_images(user["id"], doc.filename, doc.images)
+    except TranscribeBusy as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     warnings = list(doc.warnings)
     if warning:
         warnings.append(warning)
