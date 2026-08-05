@@ -30,6 +30,31 @@ class LLMError(Exception):
     """LLM backend is unreachable or returned an error."""
 
 
+# Запрос длиннее контекста — самая частая осмысленная ошибка сервера, и своих
+# бюджетов на символы мы не держим: сколько текста поместится, знает только сам
+# llama.cpp, а он об этом честно сообщает. Ловим его формулировку и переводим,
+# иначе пользователь получает стену английского JSON вместо объяснения.
+_CONTEXT_OVERFLOW_MARKERS = (
+    "exceed_context_size",
+    "exceeds the available context size",
+    "context size exceeded",
+    "try increasing the context size",
+    "prompt is too long",  # формулировка других OpenAI-совместимых серверов
+)
+
+CONTEXT_OVERFLOW_MESSAGE = (
+    "Запрос не поместился в контекст модели: переписка и вложения вместе "
+    "длиннее, чем модель читает за один раз. Уберите вложение, задайте вопрос "
+    "в новом чате или разбейте документ на части."
+)
+
+
+def _http_error(status_code: int, body: str) -> LLMError:
+    if any(marker in body.lower() for marker in _CONTEXT_OVERFLOW_MARKERS):
+        return LLMError(CONTEXT_OVERFLOW_MESSAGE)
+    return LLMError(f"LLM вернул HTTP {status_code}: {body}")
+
+
 def build_system_prompt(user_display_name: str, specialization_prompt: str = "") -> str:
     path = Path(settings.system_prompt_file)
     if not path.is_absolute():
@@ -200,7 +225,7 @@ async def stream_chat(
             async with client.stream("POST", "/chat/completions", json=payload) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode("utf-8", "replace")[:500]
-                    raise LLMError(f"LLM вернул HTTP {response.status_code}: {body}")
+                    raise _http_error(response.status_code, body)
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue

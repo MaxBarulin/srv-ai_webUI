@@ -398,17 +398,54 @@ def test_chat_message_with_image_multimodal(client, doc_user, monkeypatch):
     assert "base64" not in json.dumps([m for m in msgs if m["role"] == "user"])
 
 
-def test_attachment_text_truncated(client, doc_user, monkeypatch):
-    monkeypatch.setattr("app.routers.chat.MAX_ATTACHMENT_CHARS", 100)
+def test_attachment_text_not_truncated(client, doc_user, monkeypatch):
+    """Своего бюджета символов у нас нет: сколько текста поместится, знает
+    только модель. Длинный документ уходит целиком, а не режется наугад."""
+    captured = _spy_llm(monkeypatch)
     chat_id = client.post("/api/chats", json={}).json()["id"]
     r = client.post(f"/api/chats/{chat_id}/messages", json={
         "content": "вопрос",
         "use_tools": False,
+        "attachments": [{"filename": "big.txt", "text": "А" * 200000}],
+    })
+    assert r.status_code == 200
+    assert "А" * 200000 in captured[0][-1]["content"]
+    assert not [d for e, d in _parse_sse(r.text) if e == "doc_warning"]
+
+
+def test_too_many_attachments_rejected(client, doc_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    six = [{"filename": f"f{i}.txt", "text": f"текст {i}"} for i in range(6)]
+    assert client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False, "attachments": six}).status_code == 200
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
+        "attachments": six + [{"filename": "f7.txt", "text": "лишний"}]})
+    assert r.status_code == 400
+    assert "6 вложений" in r.json()["detail"]
+
+
+def test_context_overflow_reported_readably(client, doc_user, monkeypatch):
+    """llama.cpp упирается в контекст сама — её ответ надо перевести на
+    человеческий, иначе в чат падает стена английского JSON."""
+    from app import llm as llm_mod
+
+    async def overflow(*a, **kw):
+        raise llm_mod._http_error(400, json.dumps({"error": {
+            "code": 400, "type": "exceed_context_size_error",
+            "message": "the request exceeds the available context size. "
+                       "try increasing the context size or enable context shift"}}))
+        yield  # pragma: no cover — генератор
+
+    monkeypatch.setattr("app.routers.chat.stream_chat", overflow)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
         "attachments": [{"filename": "big.txt", "text": "А" * 500}],
     })
-    events = _parse_sse(r.text)
-    warnings = [d["detail"] for e, d in events if e == "doc_warning"]
-    assert any("обрезан" in w for w in warnings)
+    errors = [d["detail"] for e, d in _parse_sse(r.text) if e == "error"]
+    assert any("не поместился в контекст" in e for e in errors)
+    assert not any("HTTP 400" in e for e in errors)
 
 
 def test_empty_message_without_attachments_rejected(client, doc_user):
@@ -522,16 +559,12 @@ def test_message_with_only_transcript_is_not_empty(client, doc_user):
     assert r.status_code == 200
 
 
-def test_transcript_counts_against_attachment_budget(client, doc_user, monkeypatch):
-    monkeypatch.setattr("app.routers.chat.MAX_ATTACHMENT_CHARS", 100)
-    chat_id = client.post("/api/chats", json={}).json()["id"]
-    r = client.post(f"/api/chats/{chat_id}/messages", json={
-        "content": "вопрос", "use_tools": False,
-        "attachments": [{"filename": "draft.png", "images": ["data:image/png;base64,AAA"],
-                         "transcript": "Я" * 500}],
-    })
-    warnings = [d["detail"] for e, d in _parse_sse(r.text) if e == "doc_warning"]
-    assert any("расшифровка «draft.png» обрезан" in w for w in warnings)
+def test_http_error_translates_only_context_overflow():
+    from app.llm import _http_error
+    overflow = _http_error(400, '{"message": "the request exceeds the available context size"}')
+    assert "не поместился в контекст" in str(overflow)
+    other = _http_error(503, "upstream is down")
+    assert "HTTP 503" in str(other) and "upstream is down" in str(other)
 
 
 def test_transcript_masked_by_pii_filter(client, doc_user, monkeypatch):

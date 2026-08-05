@@ -322,6 +322,13 @@ async function useExample(text) {
 // приложить следующий файл), но отправку до готовности не пускаем.
 async function uploadAttachment(file) {
   if (!file) return;
+  // То же число, что MAX_ATTACHMENTS на сервере (app/routers/chat.py).
+  // Проверяем и здесь: расшифровка картинки — это полноценная генерация,
+  // и тратить её на файл, который сервер всё равно отвергнет, незачем.
+  if (pendingAttachments.length >= 6) {
+    els.toast("Не больше 6 вложений в одном сообщении", true);
+    return;
+  }
   const entry = { filename: file.name || "файл", pending: true, images: [] };
   pendingAttachments.push(entry);
   renderAttachments();
@@ -1313,7 +1320,7 @@ async function submitTurn(chatId, content, attachments) {
           note.className = "msg-note pii-note";
           note.textContent = `🛡 Заменено элементов ПДн: ${data.count}`;
           live.insertBefore(note, liveBody);
-        } else if (event === "rag_error" || event === "doc_warning") {
+        } else if (event === "rag_error") {
           const note = document.createElement("div");
           note.className = "msg-note msg-error";
           note.textContent = data.detail;

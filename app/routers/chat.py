@@ -42,8 +42,12 @@ router = APIRouter(prefix="/api/chats", tags=["chat"])
 
 DEFAULT_TITLE = "Новый чат"
 AUTO_TITLE_MAX_LEN = 60
-# Бюджет символов на извлечённый текст всех вложений (~3 симв/токен, §16)
-MAX_ATTACHMENT_CHARS = 60000
+# Вложений в одном сообщении. Ограничение на штуки, а не на символы: сколько
+# именно текста поместится, знает только сама модель — её контекст и есть
+# настоящий предел. Считать его за неё означало бы резать документы молча и
+# невпопад, поэтому длинное уходит целиком, а если не влезло — llama.cpp
+# отвечает ошибкой, и в чате появляется понятная плашка (см. app/llm.py).
+MAX_ATTACHMENTS = 6
 
 
 def document_block(filename: str, text: str) -> str:
@@ -450,6 +454,10 @@ async def send_message(
     has_doc_text = any(a.text.strip() or a.transcript.strip() for a in payload.attachments)
     if not content and not has_images and not has_doc_text:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
+    if len(payload.attachments) > MAX_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Не больше {MAX_ATTACHMENTS} вложений в одном сообщении")
 
     chat = await _get_own_chat(db, chat_id, user["id"])
 
@@ -474,26 +482,12 @@ async def send_message(
     # чтобы UI показывал документ сворачиваемым блоком, а не «стеной» в сообщении.
     # Оценка длины ~3 символа/токен; при переполнении — усечение с пометкой.
     doc_texts: list[str] = []
-    doc_warnings: list[str] = []
     attachments_meta: list[dict] = []
-    remaining = MAX_ATTACHMENT_CHARS
-
-    def _fit(kind: str, filename: str, text: str) -> str:
-        """Уложить текст вложения в общий бюджет, отметив усечение."""
-        nonlocal remaining
-        if len(text) > remaining:
-            text = text[:remaining]
-            doc_warnings.append(f"{kind} «{filename}» обрезан по лимиту контекста")
-        remaining = max(0, remaining - len(text))
-        return text
-
     for att in payload.attachments:
         transcript = _mask(att.transcript.strip())
         if att.images:
             # Сами картинки в БД не хранятся (§16). Остаётся расшифровка,
             # снятая при загрузке, — она и заменит картинку в следующих ходах.
-            if transcript:
-                transcript = _fit("расшифровка", att.filename, transcript)
             attachments_meta.append({"filename": att.filename, "image": True,
                                      **({"transcript": transcript} if transcript else {})})
             continue
@@ -501,7 +495,6 @@ async def send_message(
             # Картинки нет, а расшифровка есть — это «Перегенерировать» или
             # правка запроса: перезагрузить картинку неоткуда, но её содержимое
             # мы знаем, и терять его на ровном месте незачем.
-            transcript = _fit("расшифровка", att.filename, transcript)
             doc_texts.append(image_block(att.filename, transcript))
             attachments_meta.append({"filename": att.filename, "image": True,
                                      "transcript": transcript})
@@ -509,7 +502,6 @@ async def send_message(
         text = _mask(att.text.strip())
         if not text:
             continue
-        text = _fit("документ", att.filename, text)
         doc_texts.append(document_block(att.filename, text))
         attachments_meta.append({"filename": att.filename, "text": text})
 
@@ -669,8 +661,6 @@ async def send_message(
 
             if pii_total:
                 yield _sse("pii_masked", {"count": pii_total})
-            for warning in doc_warnings:
-                yield _sse("doc_warning", {"detail": warning})
 
             if payload.use_rag and settings.rag_enabled:
                 # Контекст из базы знаний — перед сообщением пользователя (§8).

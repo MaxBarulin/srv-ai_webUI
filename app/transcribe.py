@@ -20,11 +20,6 @@ from __future__ import annotations
 from app.config import settings
 from app.llm import LLMError, stream_chat
 
-# Потолок на пересказ одной картинки. Расшифровка живёт в переписке до конца
-# разговора, поэтому многословность здесь стоит дороже, чем обычный ответ.
-MAX_TRANSCRIPT_CHARS_PER_IMAGE = 6000
-MAX_TRANSCRIPT_CHARS = 40000
-
 TRANSCRIBE_SYSTEM = (
     "Ты расшифровываешь изображения для инженеров судостроительного завода. "
     "Твой пересказ — единственное, что останется от картинки в переписке: "
@@ -48,13 +43,6 @@ MULTI_IMAGE_HINT = (
     "\nИзображений {count}. Разбери каждое по очереди, отделяя строкой "
     "«— лист {{номер}} —»."
 )
-
-
-def _limit(text: str, count: int) -> str:
-    cap = min(MAX_TRANSCRIPT_CHARS_PER_IMAGE * max(count, 1), MAX_TRANSCRIPT_CHARS)
-    if len(text) <= cap:
-        return text
-    return text[:cap].rstrip() + "\n[расшифровка обрезана по длине]"
 
 
 async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]:
@@ -93,4 +81,4 @@ async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]
     text = "".join(parts).strip()
     if not text:
         return "", f"«{filename}»: модель вернула пустую расшифровку изображения."
-    return _limit(text, len(images)), ""
+    return text, ""
