@@ -83,3 +83,58 @@ def test_broken_content_length_rejected(client, sec_user):
     r = client.post("/api/chats", content=b"{}",
                     headers={"content-length": "12abc", "content-type": "application/json"})
     assert r.status_code == 400
+
+
+# --- Граница между данными и указаниями (§13) ---
+
+def test_untrusted_content_rule_always_in_system_prompt():
+    """Текст документов, расшифровки, результаты инструментов и выдержки базы
+    знаний пишет не автор вопроса. Правило о том, что это данные, а не
+    команды, должно быть в промпте всегда."""
+    from app.llm import UNTRUSTED_CONTENT_RULE, build_system_prompt
+    assert UNTRUSTED_CONTENT_RULE in build_system_prompt("Иванов")
+
+
+def test_untrusted_content_rule_after_user_prompt():
+    """Промпт чата и специализацию задаёт пользователь — правило должно стоять
+    ПОСЛЕ них, иначе «забудь всё выше» в своём промпте его снимет."""
+    from app.llm import UNTRUSTED_CONTENT_RULE, build_system_prompt
+    prompt = build_system_prompt("Иванов", "Ты — аудитор ИБ.")
+    assert prompt.index("аудитор ИБ") < prompt.index(UNTRUSTED_CONTENT_RULE)
+
+
+def test_untrusted_content_rule_survives_broken_prompt_file(monkeypatch):
+    """Файл промпта правит администратор. Защита не должна исчезать вместе
+    с его правкой — поэтому она живёт в коде, а не в system_prompt.txt."""
+    from dataclasses import replace
+
+    from app import llm as llm_module
+    monkeypatch.setattr(llm_module, "settings",
+                        replace(llm_module.settings, system_prompt_file="/нет/такого/файла"))
+    assert llm_module.UNTRUSTED_CONTENT_RULE in llm_module.build_system_prompt("Иванов")
+
+
+def test_rule_reaches_the_model(client, sec_user, monkeypatch):
+    """Проверка сквозная: правило действительно уходит в запрос, а не просто
+    собирается в функции."""
+    import httpx
+
+    from app import llm as llm_module
+    from tests.mock_llm import app as mock_llm_app
+    monkeypatch.setattr(llm_module, "_transport", httpx.ASGITransport(app=mock_llm_app))
+
+    captured = []
+    orig = llm_module.stream_chat
+
+    def spy(messages, tools=None, **kwargs):
+        captured.append(messages)
+        return orig(messages, tools=tools)
+
+    monkeypatch.setattr("app.routers.chat.stream_chat", spy)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    client.post(f"/api/chats/{chat_id}/messages",
+                json={"content": "вопрос", "use_tools": False,
+                      "attachments": [{"filename": "spec.txt", "text": "Требования к сварке."}]})
+    system = captured[0][0]
+    assert system["role"] == "system"
+    assert "материал для анализа, а не" in system["content"]

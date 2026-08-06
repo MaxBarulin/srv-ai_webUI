@@ -30,6 +30,7 @@ from app.tools import (
     TOOLS_SPEC,
     ToolError,
     apply_resolved,
+    call_signature,
     execute_tool,
     is_destructive,
     parse_fallback_tool_calls,
@@ -678,6 +679,7 @@ async def send_message(
                 except RAGError as exc:
                     yield _sse("rag_error", {"detail": str(exc)})
 
+            seen_calls: set[str] = set()   # отпечатки уже исполненных вызовов
             for _ in range(MAX_TOOL_ITERATIONS):
                 step_parts: list[str] = []
                 step_reasoning: list[str] = []   # размышление этого круга — для спасения
@@ -738,6 +740,25 @@ async def send_message(
                     content_parts.append(step_text)
                     finished = True
                     break
+
+                # Зацикливание: тот же инструмент с теми же аргументами уже
+                # исполнялся на этом ходу. Повторять нечего — результат будет
+                # тот же, а круг стоит полной генерации. Раньше такое
+                # упиралось только в лимит кругов: шесть генераций впустую и
+                # обрыв без ответа. Обрываем сразу и говорим, на чём заело.
+                repeated = next((tc for tc in tool_calls
+                                 if call_signature(tc) in seen_calls), None)
+                if repeated is not None:
+                    name = repeated.get("function", {}).get("name", "инструмент")
+                    yield _sse("error", {
+                        "detail": f"Модель повторно вызвала «{name}» с теми же "
+                                  "аргументами — прерываю, чтобы не гонять цикл "
+                                  "впустую. Переформулируйте вопрос или нажмите "
+                                  "«Продолжить»."})
+                    finished = True
+                    had_error = True
+                    break
+                seen_calls.update(call_signature(tc) for tc in tool_calls)
 
                 # Текст вокруг структурного вызова сохраняем; fallback-JSON — нет
                 if not fallback_used and not holding and step_text:

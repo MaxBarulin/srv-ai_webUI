@@ -537,9 +537,38 @@ def test_unknown_tool_returns_error_to_model(client, tool_user):
 
 
 def test_tool_iteration_limit(client, tool_user):
+    """Круги с РАЗНЫМИ аргументами детектор повторов не ловит — упираемся
+    в лимит кругов."""
+    from app.tools import MAX_TOOL_ITERATIONS
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_SPIN")
+    errors = _events_of(events, "error")
+    assert len(errors) == 1
+    assert "лимит" in errors[0]["detail"].lower()
+    assert len(_events_of(events, "tool")) == MAX_TOOL_ITERATIONS
+
+
+def test_repeated_identical_call_stops_early(client, tool_user):
+    """Тот же инструмент с теми же аргументами — повторять нечего: результат
+    будет тот же, а круг стоит полной генерации. Раньше это выедало все шесть
+    кругов и заканчивалось обрывом без ответа."""
     chat_id = _new_chat(client)
     events = _send(client, chat_id, "TOOL_LOOP")
     errors = _events_of(events, "error")
     assert len(errors) == 1
-    assert "лимит" in errors[0]["detail"].lower()
-    assert len(_events_of(events, "tool")) == 6  # MAX_TOOL_ITERATIONS
+    assert "повторно вызвала" in errors[0]["detail"]
+    assert "get_current_datetime" in errors[0]["detail"]
+    # Два круга: первый исполнен, на втом же самом вызове прервались
+    assert len(_events_of(events, "tool")) == 1
+
+
+def test_iteration_limit_configurable(monkeypatch):
+    """Лимит кругов вынесен в .env — под цепочки «найди → посчитай → запиши»."""
+    from dataclasses import replace
+
+    from app import config
+    monkeypatch.setattr(config, "settings", replace(config.settings, max_tool_iterations=12))
+    assert config.settings.max_tool_iterations == 12
+    # Значение не может быть нулём: цикл тогда не сделал бы ни одного круга
+    monkeypatch.setenv("MAX_TOOL_ITERATIONS", "0")
+    assert config.load_settings().max_tool_iterations == 1

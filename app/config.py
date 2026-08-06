@@ -57,6 +57,7 @@ class Settings:
     rag_mode: str
     session_ttl_hours: int
     tools_confirm_destructive: bool
+    max_tool_iterations: int
     preserve_thinking: bool
     system_prompt_file: str
     max_upload_mb: int
@@ -91,6 +92,10 @@ def load_settings() -> Settings:
         rag_mode=_get("RAG_MODE", "hybrid"),
         session_ttl_hours=_get_int("SESSION_TTL_HOURS", 12),
         tools_confirm_destructive=_get_bool("TOOLS_CONFIRM_DESTRUCTIVE", True),
+        # Кругов агентного цикла на один ход. Каждый круг — полная генерация,
+        # поэтому потолок низкий; поднимать имеет смысл под сложные цепочки
+        # «найди → прочитай → посчитай → запиши».
+        max_tool_iterations=max(1, _get_int("MAX_TOOL_ITERATIONS", 6)),
         preserve_thinking=_get_bool("PRESERVE_THINKING", True),
         system_prompt_file=_get("SYSTEM_PROMPT_FILE", "./system_prompt.txt"),
         max_upload_mb=_get_int("MAX_UPLOAD_MB", 15),

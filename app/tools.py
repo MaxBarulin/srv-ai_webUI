@@ -26,7 +26,29 @@ from app.db import get_connection
 from app.llm import APP_TZ, _WEEKDAYS_RU
 from app.scoping import new_group_id, update_group_id, visible_params, visible_sql
 
-MAX_TOOL_ITERATIONS = 6
+MAX_TOOL_ITERATIONS = settings.max_tool_iterations
+
+
+def call_signature(tc: dict) -> str:
+    """Отпечаток вызова: имя и аргументы, приведённые к устойчивому виду.
+
+    Нужен, чтобы поймать зацикливание. Модель иногда зовёт один и тот же
+    инструмент с теми же аргументами круг за кругом — ничего нового не узнаёт,
+    но каждый круг стоит полной генерации 35B. Раньше это упиралось только в
+    лимит кругов: шесть генераций впустую и обрыв без ответа.
+
+    Аргументы сравниваем по разобранному JSON с сортировкой ключей: модель
+    может выдать те же параметры в другом порядке или с другими пробелами,
+    и это тот же самый вызов.
+    """
+    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+    name = fn.get("name", "")
+    raw = fn.get("arguments") or "{}"
+    try:
+        args = json.dumps(json.loads(raw), sort_keys=True, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        args = str(raw)
+    return f"{name}:{args}"
 SEARCH_LIMIT = 20
 
 _SCOPE_PROP = {"type": "string", "enum": ["personal", "shared"],

@@ -60,7 +60,10 @@ TOOL_TRIGGERS: dict[str, tuple[str, dict]] = {
         "ends_at": "2026-07-15T11:00:00+03:00"}),
     "TOOL_TIME": ("get_current_datetime", {}),
     "TOOL_UNKNOWN": ("no_such_tool", {}),
-    "TOOL_LOOP": ("get_current_datetime", {}),  # вызывает инструмент бесконечно (лимит цикла)
+    "TOOL_LOOP": ("get_current_datetime", {}),  # один и тот же вызов (детектор зацикливания)
+    # Тоже бесконечно, но каждый круг с НОВЫМИ аргументами: детектор повторов
+    # такое не ловит (вызовы разные), и ход упирается именно в лимит кругов.
+    "TOOL_SPIN": ("notes_search", {"query": "круг"}),
 }
 
 
@@ -108,8 +111,14 @@ async def chat_completions(request: Request):
 
     trigger = _find_trigger(last_user) if body.get("tools") else None
     has_tool_result = any(m.get("role") == "tool" for m in messages)
-    # Обычный триггер срабатывает один раз; TOOL_LOOP — на каждом круге
-    emit_tool_call = trigger is not None and (not has_tool_result or "TOOL_LOOP" in last_user)
+    # Обычный триггер срабатывает один раз; TOOL_LOOP и TOOL_SPIN — на каждом круге
+    emit_tool_call = trigger is not None and (
+        not has_tool_result or "TOOL_LOOP" in last_user or "TOOL_SPIN" in last_user)
+    if trigger is not None and "TOOL_SPIN" in last_user:
+        # Каждый круг с НОВЫМИ аргументами: отпечаток вызова всякий раз другой,
+        # детектор повторов молчит, и ход упирается именно в лимит кругов.
+        rounds = sum(1 for m in messages if m.get("role") == "tool")
+        trigger = (trigger[0], {**trigger[1], "query": f"круг {rounds}"})
     fallback = "TOOL_FALLBACK" in last_user and body.get("tools") and not has_tool_result
 
     async def sse():
