@@ -98,19 +98,19 @@ def test_parse_docx():
     assert "| 1 | 2 |" in doc.text
 
 
-def test_parse_xlsx_with_row_limit(monkeypatch):
-    import openpyxl
-    monkeypatch.setattr(documents, "XLSX_MAX_ROWS", 5)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Данные"
-    for i in range(20):
-        ws.append([f"строка{i}", i])
-    buf = io.BytesIO()
-    wb.save(buf)
-    doc = parse_upload("book.xlsx", "", buf.getvalue())
-    assert "### Лист: Данные" in doc.text
-    assert any("первые 5 строк" in w for w in doc.warnings)
+@pytest.mark.parametrize("name", ["нормы.xlsx", "нормы.xls"])
+def test_excel_rejected_with_hint(name):
+    """Разбор Excel убран: таблицу вставляют картинкой из буфера или как .csv.
+    Отказ обязан подсказывать замену, а не просто «формат не поддерживается»."""
+    with pytest.raises(DocumentError, match="картинкой"):
+        parse_upload(name, "application/octet-stream", b"PK\x03\x04")
+
+
+def test_excel_rejected_by_endpoint(client, doc_user):
+    r = client.post("/api/attachments",
+                    files={"file": ("нормы.xlsx", b"PK\x03\x04", "application/octet-stream")})
+    assert r.status_code == 400
+    assert "Ctrl+V" in r.json()["detail"]
 
 
 def test_docx_zip_bomb_guard(monkeypatch):
@@ -664,14 +664,13 @@ def test_broken_office_file_is_400_not_500(client, doc_user):
 
 
 def test_office_zip_bomb_rejected():
-    """Защита от zip-бомб была только у docx; xlsx разбирал тот же процесс."""
+    """docx — это zip: сжатый на мегабайт файл разворачивается в гигабайты."""
     payload = b"A" * (300 * 1024 * 1024)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        zf.writestr("xl/sharedStrings.xml", payload)
+        zf.writestr("word/document.xml", payload)
     data = buf.getvalue()
     assert len(data) < 1024 * 1024
-    for name in ("bomb.xlsx", "bomb.docx"):
-        with pytest.raises(DocumentError, match="распакованный размер"):
-            parse_upload(name, "application/octet-stream", data)
+    with pytest.raises(DocumentError, match="распакованный размер"):
+        parse_upload("bomb.docx", "application/octet-stream", data)
 

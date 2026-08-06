@@ -33,15 +33,23 @@ ALLOWED: dict[str, set[str]] = {
     ".csv": {"text/csv", "text/plain", "application/vnd.ms-excel"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/zip", "application/octet-stream"},
-    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-              "application/zip", "application/octet-stream"},
     ".pdf": {"application/pdf", "application/octet-stream"},
     ".png": {"image/png"},
     ".jpg": {"image/jpeg"},
     ".jpeg": {"image/jpeg"},
 }
 
-XLSX_MAX_ROWS = 200          # ограничение строк на лист (§16)
+# Форматы, которые поддерживали и убрали: отказ должен подсказывать замену,
+# а не просто говорить «не поддерживается».
+DROPPED: dict[str, str] = {
+    ".xlsx": "Таблицы Excel не разбираем. Скопируйте нужный диапазон и вставьте "
+             "в поле ввода картинкой (Ctrl+V) — модель прочитает её сама. "
+             "Либо сохраните лист как .csv.",
+    ".xls": "Таблицы Excel не разбираем. Скопируйте нужный диапазон и вставьте "
+            "в поле ввода картинкой (Ctrl+V) — модель прочитает её сама. "
+            "Либо сохраните лист как .csv.",
+}
+
 DOCX_MAX_UNCOMPRESSED = 200 * 1024 * 1024  # защита от zip-бомб: 200 МБ распакованного
 CHARS_PER_TOKEN = 3          # грубая оценка длины (§16)
 IMAGE_TOKEN_BUDGET = 800     # ориентировочный бюджет токенов на изображение
@@ -78,6 +86,8 @@ def _ext(filename: str) -> str:
 
 def validate(filename: str, content_type: str, size: int) -> str:
     ext = _ext(filename)
+    if ext in DROPPED:
+        raise DocumentError(DROPPED[ext])
     if ext not in ALLOWED:
         raise DocumentError(f"Формат {ext or '(без расширения)'} не поддерживается")
     limit = settings.max_upload_mb * 1024 * 1024
@@ -124,11 +134,10 @@ def _csv_to_markdown(data: bytes) -> str:
 
 
 def _check_zip_bomb(data: bytes) -> None:
-    """Суммарный распакованный размер офисного файла (docx/xlsx — это zip).
+    """Суммарный распакованный размер docx (это zip).
 
-    Проверять обязательно оба формата: сжатый на мегабайт xlsx разворачивается
-    в гигабайты sharedStrings, и разбирает его тот же единственный процесс,
-    который в это время обслуживает весь завод.
+    Сжатый на мегабайт документ разворачивается в гигабайты, и разбирает его
+    тот же единственный процесс, который обслуживает весь завод.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -158,35 +167,6 @@ def _parse_docx(data: bytes) -> str:
             rows.insert(1, "| " + " | ".join(["---"] * width) + " |")
             parts.append("\n".join(rows))
     return "\n\n".join(parts)
-
-
-def _parse_xlsx(data: bytes) -> tuple[str, list[str]]:
-    import openpyxl
-
-    _check_zip_bomb(data)
-    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    warnings: list[str] = []
-    blocks: list[str] = []
-    for ws in wb.worksheets:
-        rows_out: list[list[str]] = []
-        for i, row in enumerate(ws.iter_rows(values_only=True)):
-            if i >= XLSX_MAX_ROWS:
-                warnings.append(f"Лист «{ws.title}»: показаны первые {XLSX_MAX_ROWS} строк")
-                break
-            cells = ["" if v is None else str(v) for v in row]
-            if any(c.strip() for c in cells):
-                rows_out.append(cells)
-        if not rows_out:
-            continue
-        width = max(len(r) for r in rows_out)
-        rows_out = [r + [""] * (width - len(r)) for r in rows_out]
-        md = ["| " + " | ".join(c.replace("|", "\\|").strip() for c in rows_out[0]) + " |",
-              "| " + " | ".join(["---"] * width) + " |"]
-        md += ["| " + " | ".join(c.replace("|", "\\|").strip() for c in r) + " |"
-               for r in rows_out[1:]]
-        blocks.append(f"### Лист: {ws.title}\n\n" + "\n".join(md))
-    wb.close()
-    return "\n\n".join(blocks), warnings
 
 
 # --- Изображения ---
@@ -355,7 +335,7 @@ def parse_upload(filename: str, content_type: str, data: bytes,
     doc = ParsedDocument(filename=filename)
 
     # Чужие парсеры на битом файле бросают что придётся — IndexError из
-    # openpyxl, KeyError из python-docx, ошибки XML. Наружу такое уходило
+    # python-docx, ошибки XML, сбои pypdf. Наружу такое уходило
     # пятисоткой: пользователь видел «Ошибка 500», а в журнале копилась
     # трасса. Любой сбой разбора — это ошибка документа, а не сервера.
     try:
@@ -365,8 +345,6 @@ def parse_upload(filename: str, content_type: str, data: bytes,
             doc.text = _csv_to_markdown(data)
         elif ext == ".docx":
             doc.text = _parse_docx(data)
-        elif ext == ".xlsx":
-            doc.text, doc.warnings = _parse_xlsx(data)
         elif ext in (".png", ".jpg", ".jpeg"):
             doc.images = [_image_to_data_url(data)]
         elif ext == ".pdf":
