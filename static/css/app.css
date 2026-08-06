@@ -1629,6 +1629,9 @@ table.users select.group-select { width: 100%; min-width: 140px; }
   body.printing-note { background: #fff; }
   body.printing-note .app { display: none !important; }
   body.printing-note #pdf-print { display: block !important; background: #fff; }
+  /* Кнопка «Копировать» — экранная, на бумаге ей делать нечего: она печаталась
+     прямо поверх первой строки кода. */
+  #pdf-print .code-copy { display: none !important; }
   /* аккуратная пагинация: не рвём таблицы, код и формулы между страницами */
   #pdf-print .table-wrap, #pdf-print .code-block,
   #pdf-print .katex-display { break-inside: avoid; page-break-inside: avoid; }

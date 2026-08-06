@@ -1,5 +1,6 @@
 // Раздел «Заметки»: список с поиском/фильтрами, просмотр, редактор с предпросмотром.
 import { api } from "/static/js/api.js";
+import { bindCodeCopy } from "/static/js/clipboard.js";
 import { renderMarkdown } from "/static/js/markdown.js";
 
 let notes = [];
@@ -71,6 +72,11 @@ export function initNotes(toastFn, currentUser) {
 
   els.tabEdit.addEventListener("click", () => setPreview(false));
   els.tabPreview.addEventListener("click", () => setPreview(true));
+
+  // Кнопку «Копировать» в блоках кода рисует общий markdown-рендер, а работать
+  // она обязана и здесь, а не только в чате.
+  bindCodeCopy(els.viewBody);
+  bindCodeCopy(els.preview);
 
   window.addEventListener("section-shown", (e) => {
     if (e.detail === "notes") refreshList();

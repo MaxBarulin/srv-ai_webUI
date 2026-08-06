@@ -1,5 +1,6 @@
 // Раздел «Чат»: список чатов, история, SSE-стриминг, «Размышления», стоп.
 import { api } from "/static/js/api.js";
+import { bindCodeCopy, copyWithFeedback } from "/static/js/clipboard.js";
 import { escapeHtml, renderMarkdown } from "/static/js/markdown.js";
 
 let chats = [];
@@ -24,36 +25,6 @@ function stickToBottom(el) {
 }
 
 function isStreaming(chatId) { return chatId !== null && streams.has(chatId); }
-
-// Копирование в буфер. navigator.clipboard доступен только в secure context
-// (HTTPS или localhost) — при доступе по http://<ip> его нет, поэтому фолбэк
-// через скрытую textarea + execCommand("copy").
-async function copyText(text) {
-  if (navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch { /* пробуем фолбэк */ }
-  }
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { /* не судьба */ }
-  ta.remove();
-  return ok;
-}
-
-// Общая обратная связь на кнопке: «Скопировано» или «Ошибка», затем возврат
-function copyWithFeedback(btn, text, label = "Копировать") {
-  copyText(text).then((ok) => {
-    btn.textContent = ok ? "Скопировано" : "Не удалось";
-    setTimeout(() => { btn.textContent = label; }, 1500);
-  });
-}
 
 const els = {};
 
@@ -148,13 +119,7 @@ export function initChat(toast, announce) {
     messagesFollow = isAtBottom(els.messages);
   });
 
-  // Кнопки «Копировать» в блоках кода (инлайн-обработчики запрещены CSP)
-  els.messages.addEventListener("click", (e) => {
-    const btn = e.target.closest(".code-copy");
-    if (!btn) return;
-    const code = btn.parentElement.querySelector("code")?.textContent ?? "";
-    copyWithFeedback(btn, code);
-  });
+  bindCodeCopy(els.messages);   // кнопки «Копировать» в блоках кода
 
   // Кнопки обратной связи 👍/👎 (§15)
   els.messages.addEventListener("click", (e) => {
