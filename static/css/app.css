@@ -1131,10 +1131,6 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 .chat-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-attachments[hidden] { display: none; }
 .attach-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
   background: var(--osk-bg);
   border: 1px solid var(--osk-line);
   border-left: 3px solid var(--osk-red);
@@ -1142,6 +1138,26 @@ table.users select.group-select { width: 100%; min-width: 140px; }
   color: var(--osk-text);
   max-width: 260px;
 }
+/* У документа плашка — <details>: раскрывается и занимает строку целиком */
+details.attach-chip[open] { max-width: 100%; flex-basis: 100%; }
+.attach-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: default;
+  list-style: none;          /* убрать штатный треугольник у <summary> */
+}
+summary.attach-head { cursor: pointer; }
+summary.attach-head::-webkit-details-marker { display: none; }
+/* Длинное имя файла обрезаем многоточием, иначе оно вылезает за рамку */
+.attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+details.attach-chip > .attach-doc-body { max-height: 30vh; }
 .attach-remove {
   border: none;
   background: none;

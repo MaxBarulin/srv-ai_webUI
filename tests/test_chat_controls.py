@@ -376,14 +376,16 @@ def test_chat_toggles_persisted(client, ctrl_user):
 
 def test_pdf_mode_persisted(client, ctrl_user):
     chat_id = client.post("/api/chats", json={}).json()["id"]
-    # дефолт — vision (PDF как картинка)
-    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
-    assert chat["pdf_mode"] == "vision"
-
-    assert client.put(f"/api/chats/{chat_id}",
-                      json={"pdf_mode": "text"}).status_code == 200
+    # дефолт — text: разбор текстового слоя дёшев, картинками страницы уходят
+    # только по явному желанию (каждая — сотни-тысячи токенов)
+    assert client.post("/api/chats", json={}).json()["pdf_mode"] == "text"
     chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
     assert chat["pdf_mode"] == "text"
+
+    assert client.put(f"/api/chats/{chat_id}",
+                      json={"pdf_mode": "vision"}).status_code == 200
+    chat = [c for c in client.get("/api/chats").json() if c["id"] == chat_id][0]
+    assert chat["pdf_mode"] == "vision"
 
     # недопустимое значение отвергается
     assert client.put(f"/api/chats/{chat_id}",

@@ -168,13 +168,13 @@ async def create_chat(
     # сохранили своё состояние.
     cursor = await db.execute(
         "INSERT INTO chats (user_id, title, specialization_id, custom_prompt, "
-        "use_calc, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+        "use_calc, pdf_mode, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'text', ?, ?)",
         (user["id"], title, spec_id, custom_prompt, now, now),
     )
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
             "custom_prompt": custom_prompt, "use_tools": 1, "use_calc": 1, "enable_thinking": 1,
-            "pdf_mode": "vision", "created_at": now, "updated_at": now}
+            "pdf_mode": "text", "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")

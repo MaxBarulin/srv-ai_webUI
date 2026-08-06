@@ -203,7 +203,7 @@ function applyChatToggles() {
   els.ctxTools.checked = Boolean(chat.use_tools);
   els.ctxCalc.checked = Boolean(chat.use_calc);
   els.ctxThink.checked = Boolean(chat.enable_thinking);
-  els.ctxPdf.checked = (chat.pdf_mode || "vision") !== "text";
+  els.ctxPdf.checked = (chat.pdf_mode || "text") === "vision";
 }
 
 async function saveChatToggle(field, value) {
@@ -367,29 +367,45 @@ function onInputPaste(e) {
   });
 }
 
+// Плашка вложения до отправки. У документа она разворачивается: посмотреть,
+// что именно вытащил парсер, надо ДО того, как это уйдёт модели, а не после.
 function renderAttachments() {
   els.attachments.hidden = pendingAttachments.length === 0;
   els.attachments.replaceChildren(...pendingAttachments.map((att, idx) => {
-    const chip = document.createElement("span");
-    chip.className = "attach-chip";
-    const isImage = att.pending ? /\.(png|jpe?g|gif|bmp|webp|tiff?|pdf)$/i.test(att.filename)
+    const isImage = att.pending ? /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i.test(att.filename)
                                 : !!(att.images && att.images.length);
-    chip.textContent = `${att.pending ? "⏳" : isImage ? "🖼" : "📄"} ${att.filename}`;
-    if (att.pending) {
-      chip.classList.add("attach-chip-pending");
-      chip.title = "Разбираем файл";
-    }
+    const chip = document.createElement(att.text ? "details" : "span");
+    chip.className = "attach-chip";
+
+    const head = document.createElement(att.text ? "summary" : "span");
+    head.className = "attach-head";
+    const name = document.createElement("span");
+    name.className = "attach-name";   // длинное имя обрезается, а не рвёт рамку
+    name.textContent = `${att.pending ? "⏳" : isImage ? "🖼" : "📄"} ${att.filename}`;
+    name.title = att.filename;
+    head.appendChild(name);
+    if (att.pending) chip.classList.add("attach-chip-pending");
+
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "attach-remove";
     remove.textContent = "✕";
     remove.title = "Убрать вложение";
-    remove.addEventListener("click", () => {
+    remove.addEventListener("click", (e) => {
+      e.preventDefault();          // внутри <summary> клик иначе раскроет блок
       pendingAttachments.splice(idx, 1);
       renderAttachments();
       updateInputState();
     });
-    chip.appendChild(remove);
+    head.appendChild(remove);
+    chip.appendChild(head);
+
+    if (att.text) {
+      const body = document.createElement("div");
+      body.className = "attach-doc-body";
+      body.textContent = att.text;
+      chip.appendChild(body);
+    }
     return chip;
   }));
 }
