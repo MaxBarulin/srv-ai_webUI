@@ -281,14 +281,13 @@ async function useExample(text) {
 
 // --- Вложения (§16) ---
 
-// Картинка расшифровывается на сервере прямо при загрузке (§16), а это
-// полноценная генерация — десятки секунд. Поэтому вложение появляется в
-// списке сразу, помеченным как обрабатываемое: кнопку не блокируем (можно
-// приложить следующий файл), но отправку до готовности не пускаем.
+// При закреплении файл только разбирается — модель не задействована, это
+// быстро. Расшифровка картинки (§16) делается позже, при отправке, и видна
+// в самом ходе. Вложение всё равно появляется в списке сразу помеченным:
+// большой PDF растеризуется не мгновенно, а отправлять недоразобранное нельзя.
 //
-// Загрузки идут по очереди: вставка трёх картинок из буфера запускала три
-// расшифровки разом, то есть три параллельные генерации 35B на одного
-// человека. Сервер такое тоже не примет (MAX_CONCURRENT_PER_USER).
+// Загрузки идут по очереди: вставка трёх картинок из буфера разом ставила
+// серверу три параллельных разбора, а процесс там один на всех.
 let uploadChain = Promise.resolve();
 
 function uploadAttachment(file) {
@@ -378,16 +377,7 @@ function renderAttachments() {
     chip.textContent = `${att.pending ? "⏳" : isImage ? "🖼" : "📄"} ${att.filename}`;
     if (att.pending) {
       chip.classList.add("attach-chip-pending");
-      chip.title = isImage ? "Расшифровка изображения — это занимает время"
-                           : "Разбираем файл";
-    } else if (att.transcript) {
-      // Расшифровка заменит картинку в следующих вопросах — пусть будет видно,
-      // что именно модель в ней прочитала, до отправки, а не после.
-      const mark = document.createElement("span");
-      mark.className = "attach-transcript-mark";
-      mark.textContent = "расшифровано";
-      mark.title = att.transcript;
-      chip.appendChild(mark);
+      chip.title = "Разбираем файл";
     }
     const remove = document.createElement("button");
     remove.type = "button";
@@ -1222,16 +1212,51 @@ async function sendMessage() {
   await submitTurn(chatId, content, attachments);
 }
 
+// Расшифровка картинки идёт первым делом на ходу и занимает столько же, сколько
+// обычный ответ. Пока она идёт — плашка в ответе, чтобы не выглядело зависанием;
+// когда готова — сворачиваемый блок под самой картинкой, к которой относится.
+function onAttachmentEvent(st, userNode, data) {
+  const { live, liveBody } = st;
+  let note = live.querySelector(".attach-progress");
+  if (data.status === "run") {
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "msg-note attach-progress";
+      live.insertBefore(note, liveBody);
+    }
+    note.textContent = `🖼 Расшифровываю «${data.filename}» — это как обычный ответ по времени`;
+    return;
+  }
+  if (note) note.remove();
+  if (data.status === "error") {
+    const err = document.createElement("div");
+    err.className = "msg-note msg-error";
+    err.textContent = data.detail;
+    live.insertBefore(err, liveBody);
+    return;
+  }
+  // Готово: заменяем в запросе пометку об имени файла на блок с расшифровкой
+  const chips = [...userNode.querySelectorAll(".attach-msg-chip")];
+  const chip = chips.find((c) => c.textContent.includes(data.filename));
+  const block = attachmentBlock({ filename: data.filename, image: true,
+                                  transcript: data.transcript });
+  if (chip) chip.replaceWith(block);
+  else userNode.appendChild(block);
+}
+
 // Ядро одной генерации: рисует запрос пользователя, живой ответ и стрим.
 // Используется отправкой, «Перегенерировать» и «Редактировать».
 async function submitTurn(chatId, content, attachments) {
-  els.messages.appendChild(messageNode({
+  // Узел запроса держим под рукой: расшифровка картинки приходит уже во время
+  // хода и дописывается сюда же, к своему изображению.
+  const userNode = messageNode({
     role: "user",
     content,
     attachments: attachments.map((a) => ((a.images && a.images.length) || a.transcript
       ? { filename: a.filename, image: true, transcript: a.transcript || "" }
       : { filename: a.filename, text: a.text || "" })),
-  }));
+  });
+  els.messages.appendChild(userNode);
   // Пользователь отправил сообщение — прыгаем вниз и снова следим за стримом.
   scrollToBottom(true);
 
@@ -1302,6 +1327,8 @@ async function submitTurn(chatId, content, attachments) {
           note.className = "msg-note msg-error";
           note.textContent = data.detail;
           live.insertBefore(note, liveBody);
+        } else if (event === "attachment") {
+          onAttachmentEvent(st, userNode, data);
         } else if (event === "error") throw new Error(data.detail);
         else if (event === "done") {
           if (data.title) renamed = data.title;

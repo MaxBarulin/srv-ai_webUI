@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -74,6 +75,23 @@ def _find_trigger(last_user: str) -> tuple[str, dict] | None:
     return None
 
 
+# Учёт расшифровок: нужен, чтобы проверять не только плашку в интерфейсе, но и
+# то, что при «Остановить» генерация действительно обрывается на стороне модели,
+# а не продолжает крутиться впустую.
+TRANSCRIBE_LOG: list[str] = []
+
+
+@app.get("/probe")
+async def probe():
+    return {"transcribe": TRANSCRIBE_LOG}
+
+
+@app.post("/probe/reset")
+async def probe_reset():
+    TRANSCRIBE_LOG.clear()
+    return {"ok": True}
+
+
 @app.get("/props")
 async def props():
     """llama.cpp-совместимый /props: реальный n_ctx запущенного сервера."""
@@ -139,11 +157,21 @@ async def chat_completions(request: Request):
             if "TRANSCRIBE_EMPTY" in system:  # ветка «модель промолчала»
                 yield "data: [DONE]\n\n"
                 return
-            for text in ("РАСШИФРОВКА: ", f"изображений {n}, ",
-                         "на чертеже вал Ø40 мм, сталь 09Г2С."):
-                yield chunk({"content": text})
-                await asyncio.sleep(0.01)
-            yield "data: [DONE]\n\n"
+            TRANSCRIBE_LOG.append("start")
+            done = False
+            try:
+                # TRANSCRIBE_SLOW в файле-флаге: даёт время нажать «Остановить»
+                delay = 2.0 if Path("/tmp/mock-slow-transcribe").exists() else 0.01
+                for text in ("РАСШИФРОВКА: ", f"изображений {n}, ",
+                             "на чертеже вал Ø40 мм, сталь 09Г2С."):
+                    yield chunk({"content": text})
+                    await asyncio.sleep(delay)
+                yield "data: [DONE]\n\n"
+                done = True
+            finally:
+                # Клиент отвалился — генератор закрывают, сюда мы попадём с
+                # done=False. Именно это и значит «генерацию оборвали».
+                TRANSCRIBE_LOG.append("done" if done else "cancelled")
             return
 
         if emit_tool_call:

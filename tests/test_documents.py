@@ -390,10 +390,12 @@ def test_chat_message_with_image_multimodal(client, doc_user, monkeypatch):
     assert "image_url" in kinds
     assert user_msg["content"][-1]["image_url"]["url"] == data_url
 
-    # В БД изображение не сохраняется — только пометка-вложение с именем файла
+    # В БД изображение не сохраняется — остаются имя файла и расшифровка,
+    # снятая на этом же ходу (см. раздел про расшифровку ниже)
     msgs = client.get(f"/api/chats/{chat_id}/messages").json()
     stored = [m for m in msgs if m["role"] == "user"][0]
-    assert stored["attachments"] == [{"filename": "photo.png", "image": True}]
+    assert stored["attachments"][0]["filename"] == "photo.png"
+    assert stored["attachments"][0]["image"] is True
     # (ответ mock-LLM цитирует запрос, поэтому проверяем только сообщения пользователя)
     assert "base64" not in json.dumps([m for m in msgs if m["role"] == "user"])
 
@@ -469,40 +471,87 @@ def _spy_llm(monkeypatch):
     return captured
 
 
-def test_upload_image_returns_transcript(client, doc_user):
-    """Картинка расшифровывается сразу при загрузке, а не при чтении истории:
-    потом расшифровывать нечего — самой картинки в переписке уже нет."""
-    files = {"file": ("draft.png", _png_bytes(), "image/png")}
-    body = client.post("/api/attachments", files=files).json()
-    assert body["images"]
-    assert "РАСШИФРОВКА" in body["transcript"]
-    assert "09Г2С" in body["transcript"]
+def test_upload_does_not_touch_the_model(client, doc_user, monkeypatch):
+    """Закрепление файла — это только разбор. Расшифровка стоит генерации, и
+    запускать её раньше, чем человек нажал «Отправить», нельзя: он ещё может
+    убрать вложение или вовсе передумать."""
+    from app import transcribe as tr
+
+    called = []
+    monkeypatch.setattr(tr, "stream_chat", lambda *a, **kw: called.append(1))
+    body = client.post("/api/attachments",
+                       files={"file": ("draft.png", _png_bytes(), "image/png")}).json()
+    assert body["images"] and not called
+    assert "transcript" not in body
 
 
-def test_upload_document_has_no_transcript(client, doc_user):
-    files = {"file": ("note.txt", "Текст".encode(), "text/plain")}
-    assert client.post("/api/attachments", files=files).json()["transcript"] == ""
+def test_transcription_runs_on_send(client, doc_user):
+    """Расшифровка приходит событиями хода: сначала «идёт», потом текст."""
+    data_url = "data:image/png;base64," + base64.b64encode(_png_bytes()).decode()
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на чертеже?", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [data_url]}]})
+    events = [(e, d) for e, d in _parse_sse(r.text) if e == "attachment"]
+    assert [d["status"] for _, d in events] == ["run", "done"]
+    assert all(d["filename"] == "draft.png" for _, d in events)
+    assert "РАСШИФРОВКА" in events[-1][1]["transcript"]
+
+    # И она дописана в уже сохранённое сообщение пользователя
+    stored = [m for m in client.get(f"/api/chats/{chat_id}/messages").json()
+              if m["role"] == "user"][0]
+    assert "РАСШИФРОВКА" in stored["attachments"][0]["transcript"]
+
+
+def test_transcript_not_sent_on_its_own_turn(client, doc_user, monkeypatch):
+    """На своём ходу модель смотрит на саму картинку — пересказ ей там не нужен
+    и только занимал бы место."""
+    captured = _spy_llm(monkeypatch)
+    data_url = "data:image/png;base64," + base64.b64encode(_png_bytes()).decode()
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на чертеже?", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [data_url]}]})
+    sent = json.dumps(captured[0], ensure_ascii=False)
+    assert "image_url" in sent
+    assert "РАСШИФРОВКА" not in sent
 
 
 def test_transcribe_can_be_disabled(client, doc_user, monkeypatch):
     from app import transcribe as transcribe_module
-    monkeypatch.setattr(transcribe_module, "settings", replace(settings, image_transcribe=False))
-    files = {"file": ("draft.png", _png_bytes(), "image/png")}
-    body = client.post("/api/attachments", files=files).json()
-    assert body["images"] and body["transcript"] == ""
+    monkeypatch.setattr(transcribe_module, "settings",
+                        replace(settings, image_transcribe=False))
+    data_url = "data:image/png;base64," + base64.b64encode(_png_bytes()).decode()
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [data_url]}]})
+    assert not [d for e, d in _parse_sse(r.text) if e == "attachment"]
+    stored = [m for m in client.get(f"/api/chats/{chat_id}/messages").json()
+              if m["role"] == "user"][0]
+    assert "transcript" not in stored["attachments"][0]
 
 
-def test_transcribe_survives_llm_failure(client, doc_user, monkeypatch):
+def test_transcribe_failure_does_not_break_the_turn(client, doc_user, monkeypatch):
+    """Модель не ответила на расшифровку — ход всё равно должен дойти до конца:
+    саму картинку она на этом ходу видит, теряется только пересказ."""
+    from app import llm as llm_mod
+
     async def boom(*a, **kw):
-        raise llm_module.LLMError("нет связи")
+        raise llm_mod.LLMError("нет связи")
         yield  # pragma: no cover — генератор
 
     monkeypatch.setattr("app.transcribe.stream_chat", boom)
-    files = {"file": ("draft.png", _png_bytes(), "image/png")}
-    body = client.post("/api/attachments", files=files).json()
-    # Загрузка не падает: картинку всё ещё можно отправить, просто без пересказа
-    assert body["images"] and body["transcript"] == ""
-    assert any("расшифровать" in w for w in body["warnings"])
+    data_url = "data:image/png;base64," + base64.b64encode(_png_bytes()).decode()
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на чертеже?", "use_tools": False,
+        "attachments": [{"filename": "draft.png", "images": [data_url]}]})
+    events = _parse_sse(r.text)
+    notes = [d for e, d in events if e == "attachment" and d["status"] == "error"]
+    assert notes and "расшифровать" in notes[0]["detail"]
+    assert [d for e, d in events if e == "content"]     # ответ всё равно пришёл
+
 
 
 def test_transcript_replaces_image_in_later_turns(client, doc_user, monkeypatch):
@@ -626,32 +675,3 @@ def test_office_zip_bomb_rejected():
         with pytest.raises(DocumentError, match="распакованный размер"):
             parse_upload(name, "application/octet-stream", data)
 
-
-def test_transcription_limited_per_user(client, doc_user, monkeypatch):
-    """Загрузка картинки стала стоить генерации 35B — значит, ей нужен предел,
-    иначе десяток PNG занимает модель, ничего не отправляя в чат."""
-    import asyncio
-
-    from app import transcribe as tr
-
-    async def slow(*a, **kw):
-        await asyncio.sleep(5)
-        yield "content", "…"  # pragma: no cover
-
-    monkeypatch.setattr(tr, "stream_chat", slow)
-    uid = client.get("/api/me").json()["id"]
-    monkeypatch.setattr(tr, "_in_flight", {uid: tr.MAX_CONCURRENT_PER_USER})
-    r = client.post("/api/attachments", files={"file": ("x.png", _png_bytes(), "image/png")})
-    assert r.status_code == 429
-    assert "не больше" in r.json()["detail"]
-
-
-def test_transcription_counter_released(client, doc_user):
-    """Счётчик обязан освобождаться, иначе после трёх картинок за сеанс
-    загрузка встанет навсегда."""
-    from app import transcribe as tr
-    uid = client.get("/api/me").json()["id"]
-    for _ in range(tr.MAX_CONCURRENT_PER_USER + 2):
-        assert client.post("/api/attachments",
-                           files={"file": ("x.png", _png_bytes(), "image/png")}).status_code == 200
-    assert tr._in_flight.get(uid, 0) == 0

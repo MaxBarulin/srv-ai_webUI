@@ -5,10 +5,10 @@ Endpoint без сохранения состояния: файл парситс
 хранится. Разобранное содержимое клиент отправляет вместе со следующим
 сообщением чата (см. chat.send_message).
 
-Картинки здесь же расшифровываются (app.transcribe): в переписке они не
-сохраняются, и без пересказа от них на следующем ходу остаётся одно имя файла.
-Из-за этого ответ на загрузку картинки идёт десятки секунд — это плата
-осознанная, ждать приходится, пока пользователь дописывает вопрос.
+Здесь только разбор — модель не задействована. Расшифровка картинок (§16)
+делается позже, при отправке сообщения (app/routers/chat.py): она стоит
+полноценной генерации, и место ей внутри хода, где видно, чем занята модель,
+и где её обрывает кнопка «Остановить».
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from starlette.concurrency import run_in_threadpool
 from app.auth import get_current_user
 from app.config import settings
 from app.documents import DocumentError, parse_upload
-from app.transcribe import TranscribeBusy, transcribe_images
 
 router = APIRouter(prefix="/api", tags=["attachments"])
 
@@ -44,18 +43,10 @@ async def upload_attachment(
             pdf_mode=pdf_mode)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    try:
-        transcript, warning = await transcribe_images(user["id"], doc.filename, doc.images)
-    except TranscribeBusy as exc:
-        raise HTTPException(status_code=429, detail=str(exc))
-    warnings = list(doc.warnings)
-    if warning:
-        warnings.append(warning)
     return {
         "filename": doc.filename,
         "text": doc.text,
         "images": doc.images,
-        "transcript": transcript,
-        "warnings": warnings,
+        "warnings": doc.warnings,
         "token_estimate": doc.token_estimate,
     }

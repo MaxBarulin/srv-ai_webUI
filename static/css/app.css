@@ -1152,14 +1152,8 @@ table.users select.group-select { width: 100%; min-width: 140px; }
   padding: 0;
 }
 .attach-remove:hover { color: var(--osk-red); }
-/* Файл ещё обрабатывается: у картинки это расшифровка — десятки секунд */
+/* Файл ещё разбирается (большой PDF растеризуется не мгновенно) */
 .attach-chip-pending { color: var(--osk-slate); border-left-color: var(--osk-line); }
-.attach-transcript-mark {
-  font-size: 11px;
-  color: var(--osk-slate);
-  border-bottom: 1px dotted var(--osk-line);
-  cursor: help;
-}
 .chat-footnote {
   display: flex;
   align-items: baseline;

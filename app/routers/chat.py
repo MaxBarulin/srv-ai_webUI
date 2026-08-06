@@ -22,6 +22,8 @@ from app.llm import LLMError, build_system_prompt, get_server_context_size, stre
 from app.metrics import metrics
 from app.pii import mask_text
 from app.rag import RAGError, context_message, fetch_context
+from app.transcribe import enabled as transcribe_enabled
+from app.transcribe import transcribe_images
 from app.tools import (
     CALC_METHOD_TOOLS,
     CALC_SYSTEM_HINT,
@@ -373,6 +375,21 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _store_attachments(message_id: int, meta: list[dict]) -> None:
+    """Дописать расшифровки в уже сохранённое сообщение пользователя.
+
+    Сообщение записывается до начала стрима (иначе при обрыве связи вопрос
+    пропал бы), а расшифровка появляется позже, уже внутри хода. Отдельное
+    соединение — чтобы запись пережила отключение клиента, как и сохранение
+    ответа модели.
+    """
+    async with get_connection() as db:
+        await db.execute(
+            "UPDATE messages SET tool_calls_json = ? WHERE id = ?",
+            (json.dumps({"attachments": meta}, ensure_ascii=False), message_id))
+        await db.commit()
+
+
 async def _build_history(db: aiosqlite.Connection, chat_id: int) -> list[dict]:
     """История для LLM: текст документов из вложений восстанавливается в
     сообщение (контекст сохраняется); пустые — пропускаются.
@@ -484,13 +501,20 @@ async def send_message(
     # Оценка длины ~3 символа/токен; при переполнении — усечение с пометкой.
     doc_texts: list[str] = []
     attachments_meta: list[dict] = []
+    # Картинки, которые предстоит расшифровать: индекс в attachments_meta и
+    # сами data-URL. Расшифровка — полноценная генерация, и делается она уже
+    # внутри стрима, после нажатия «Отправить»: пользователь видит, чем занята
+    # модель, и может прервать кнопкой «Остановить».
+    to_transcribe: list[tuple[int, str, list[str]]] = []
     for att in payload.attachments:
         transcript = _mask(att.transcript.strip())
         if att.images:
-            # Сами картинки в БД не хранятся (§16). Остаётся расшифровка,
-            # снятая при загрузке, — она и заменит картинку в следующих ходах.
+            # Сами картинки в БД не хранятся (§16) — остаётся расшифровка.
             attachments_meta.append({"filename": att.filename, "image": True,
                                      **({"transcript": transcript} if transcript else {})})
+            if not transcript:
+                to_transcribe.append(
+                    (len(attachments_meta) - 1, att.filename, list(att.images)))
             continue
         if transcript:
             # Картинки нет, а расшифровка есть — это «Перегенерировать» или
@@ -547,7 +571,7 @@ async def send_message(
         {"role": "user", "content": user_content},
     ]
 
-    await db.execute(
+    cursor = await db.execute(
         "INSERT INTO messages (chat_id, role, content, tool_calls_json, created_at) "
         "VALUES (?, 'user', ?, ?, ?)",
         (chat_id, content,
@@ -556,6 +580,7 @@ async def send_message(
          utcnow_iso()),
     )
     await db.commit()
+    user_message_id = cursor.lastrowid
 
     auto_title = None
     if chat["title"] == DEFAULT_TITLE:
@@ -662,6 +687,24 @@ async def send_message(
 
             if pii_total:
                 yield _sse("pii_masked", {"count": pii_total})
+
+            # Расшифровка приложенных картинок — здесь, а не при загрузке файла.
+            # Это отдельная генерация, и место ей внутри хода: видно, чем занята
+            # модель, и «Остановить» её обрывает вместе со всем остальным.
+            # На ЭТОМ ходу модель смотрит на саму картинку, поэтому в промпт
+            # расшифровка не идёт — она нужна следующим ходам, когда картинки
+            # уже не будет (§16).
+            for meta_index, filename, images in to_transcribe if transcribe_enabled() else []:
+                yield _sse("attachment", {"filename": filename, "status": "run"})
+                text, warning = await transcribe_images(filename, images)
+                if warning or not text:
+                    yield _sse("attachment", {"filename": filename, "status": "error",
+                                              "detail": warning or "расшифровка не получена"})
+                    continue
+                attachments_meta[meta_index]["transcript"] = text
+                await _store_attachments(user_message_id, attachments_meta)
+                yield _sse("attachment", {"filename": filename, "status": "done",
+                                          "transcript": text})
 
             if payload.use_rag and settings.rag_enabled:
                 # Контекст из базы знаний — перед сообщением пользователя (§8).
