@@ -9,6 +9,7 @@ import time
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from app.appsettings import calc_allowed_for
@@ -19,7 +20,9 @@ from app.calc_methods import active_methods, build_catalogue
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, get_server_context_size, stream_chat
+from app.documents import DocumentError, rasterize_pages
 from app.metrics import metrics
+from app.pending_pdf import take as take_pending_pdf
 from app.pii import mask_text
 from app.rag import RAGError, context_message, fetch_context
 from app.transcribe import enabled as transcribe_enabled
@@ -103,10 +106,13 @@ class Attachment(BaseModel):
     filename: str = "file"
     text: str = ""
     images: list[str] = []  # data-URL, только на время генерации (§16)
-    # Расшифровка картинок, снятая при загрузке. В отличие от самих картинок,
-    # остаётся в истории навсегда. Приходит пустой у документов и у картинок,
-    # которые расшифровать не удалось.
+    # Расшифровка картинок. В отличие от самих картинок, остаётся в истории
+    # навсегда. Пустая у документов и у картинок, расшифровать которые не вышло.
     transcript: str = ""
+    # PDF, приложенный в режиме «как картинку»: страницы ещё не нарисованы,
+    # файл ждёт в памяти сервера (app/pending_pdf.py). Растеризация — при
+    # отправке, внутри хода.
+    pdf_token: str = ""
 
 
 class SendMessageRequest(BaseModel):
@@ -468,7 +474,7 @@ async def send_message(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> StreamingResponse:
     content = payload.content.strip()
-    has_images = any(a.images for a in payload.attachments)
+    has_images = any(a.images or a.pdf_token for a in payload.attachments)
     has_doc_text = any(a.text.strip() or a.transcript.strip() for a in payload.attachments)
     if not content and not has_images and not has_doc_text:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
@@ -506,8 +512,14 @@ async def send_message(
     # внутри стрима, после нажатия «Отправить»: пользователь видит, чем занята
     # модель, и может прервать кнопкой «Остановить».
     to_transcribe: list[tuple[int, str, list[str]]] = []
+    # PDF, которые предстоит нарисовать: (индекс в meta, имя, токен)
+    to_rasterize: list[tuple[int, str, str]] = []
     for att in payload.attachments:
         transcript = _mask(att.transcript.strip())
+        if att.pdf_token and not att.images:
+            attachments_meta.append({"filename": att.filename, "image": True})
+            to_rasterize.append((len(attachments_meta) - 1, att.filename, att.pdf_token))
+            continue
         if att.images:
             # Сами картинки в БД не хранятся (§16) — остаётся расшифровка.
             attachments_meta.append({"filename": att.filename, "image": True,
@@ -558,17 +570,19 @@ async def send_message(
             hint = f"{hint}\n\n{catalogue}"
         spec_prompt = f"{spec_prompt}\n\n{hint}".strip()
 
-    # Изображения передаются модели через OpenAI-формат image_url (§16)
-    if image_urls:
-        user_content: object = [{"type": "text", "text": text_for_model or "Проанализируй вложение."}]
-        user_content += [{"type": "image_url", "image_url": {"url": url}} for url in image_urls]
-    else:
-        user_content = text_for_model
+    # Сообщение пользователя собирается уже внутри хода: картинки страниц PDF
+    # появятся только после растеризации, а она теперь там (§16).
+    def build_user_message(images: list[str]) -> dict:
+        if not images:
+            return {"role": "user", "content": text_for_model}
+        parts: list[dict] = [
+            {"type": "text", "text": text_for_model or "Проанализируй вложение."}]
+        parts += [{"type": "image_url", "image_url": {"url": u}} for u in images]
+        return {"role": "user", "content": parts}
 
     llm_messages = [
         {"role": "system", "content": build_system_prompt(user["display_name"], spec_prompt)},
         *history,
-        {"role": "user", "content": user_content},
     ]
 
     cursor = await db.execute(
@@ -694,6 +708,38 @@ async def send_message(
             # На ЭТОМ ходу модель смотрит на саму картинку, поэтому в промпт
             # расшифровка не идёт — она нужна следующим ходам, когда картинки
             # уже не будет (§16).
+            # Растеризация страниц PDF — самое долгое в разборе (двадцать
+            # страниц это полминуты). Здесь ей и место: видно, чем занят
+            # сервер, работает «Остановить», и никто не ждёт чужой файл с
+            # заблокированной кнопкой отправки.
+            for meta_index, filename, token in to_rasterize:
+                yield _sse("attachment", {"filename": filename, "status": "run",
+                                          "stage": "pages"})
+                raw = take_pending_pdf(token, user["id"])
+                if raw is None:
+                    yield _sse("attachment", {
+                        "filename": filename, "status": "error",
+                        "detail": f"«{filename}»: файл больше не ждёт обработки "
+                                  "(прошло много времени или служба перезапускалась) "
+                                  "— приложите заново"})
+                    continue
+                try:
+                    pages, warns = await run_in_threadpool(rasterize_pages, raw)
+                except DocumentError as exc:
+                    yield _sse("attachment", {"filename": filename, "status": "error",
+                                              "detail": f"«{filename}»: {exc}"})
+                    continue
+                for warn in warns:
+                    yield _sse("attachment", {"filename": filename, "status": "error",
+                                              "detail": warn})
+                image_urls.extend(pages)
+                to_transcribe.append((meta_index, filename, pages))
+                yield _sse("attachment", {"filename": filename, "status": "pages",
+                                          "pages": len(pages)})
+
+            # Сообщение пользователя — только теперь: картинки страниц готовы
+            msgs.append(build_user_message(image_urls))
+
             for meta_index, filename, images in to_transcribe if transcribe_enabled() else []:
                 yield _sse("attachment", {"filename": filename, "status": "run"})
                 text, warning = await transcribe_images(filename, images)

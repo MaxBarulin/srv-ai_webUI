@@ -5,10 +5,10 @@ Endpoint без сохранения состояния: файл парситс
 хранится. Разобранное содержимое клиент отправляет вместе со следующим
 сообщением чата (см. chat.send_message).
 
-Здесь только разбор — модель не задействована. Расшифровка картинок (§16)
-делается позже, при отправке сообщения (app/routers/chat.py): она стоит
-полноценной генерации, и место ей внутри хода, где видно, чем занята модель,
-и где её обрывает кнопка «Остановить».
+Здесь только быстрый разбор. На отправку сообщения отложено всё долгое
+(app/routers/chat.py): растеризация страниц PDF в картинки и их расшифровка.
+Место такому ожиданию внутри хода, где видно, чем занят сервер, и где
+работает «Остановить», — а не на закреплении файла с заблокированной кнопкой.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from app.auth import get_current_user
 from app.config import settings
 from app.documents import DocumentError, parse_upload
+from app.pending_pdf import put as put_pending_pdf
 
 router = APIRouter(prefix="/api", tags=["attachments"])
 
@@ -43,10 +44,15 @@ async def upload_attachment(
             pdf_mode=pdf_mode)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {
+    body = {
         "filename": doc.filename,
         "text": doc.text,
         "images": doc.images,
         "warnings": doc.warnings,
         "token_estimate": doc.token_estimate,
     }
+    if doc.pdf_pages:
+        # Страницы нарисуются при отправке; файл ждёт своей очереди в памяти
+        body["pdf_pages"] = doc.pdf_pages
+        body["pdf_token"] = put_pending_pdf(user["id"], doc.filename, data)
+    return body

@@ -74,10 +74,15 @@ class ParsedDocument:
     text: str = ""
     images: list[str] = field(default_factory=list)  # data-URL (base64)
     warnings: list[str] = field(default_factory=list)
+    # PDF в режиме «как картинку»: сколько страниц предстоит растеризовать.
+    # Сама растеризация откладывается до отправки сообщения — она стоит
+    # десятков секунд, и ожиданию место в ходе, а не на закреплении файла.
+    pdf_pages: int = 0
 
     @property
     def token_estimate(self) -> int:
-        return len(self.text) // CHARS_PER_TOKEN + len(self.images) * IMAGE_TOKEN_BUDGET
+        pages = len(self.images) or self.pdf_pages
+        return len(self.text) // CHARS_PER_TOKEN + pages * IMAGE_TOKEN_BUDGET
 
 
 def _ext(filename: str) -> str:
@@ -287,6 +292,43 @@ def _pdf_rasterize_poppler(data: bytes, max_pages: int) -> list[bytes]:
         return [p.read_bytes() for p in pages]
 
 
+def pdf_page_count(data: bytes) -> int:
+    """Число страниц без растеризации — открыть документ дёшево, рисовать дорого."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        from pypdf import PdfReader
+        return len(PdfReader(io.BytesIO(data)).pages)
+    try:
+        pdf = pdfium.PdfDocument(data)
+    except pdfium.PdfiumError as exc:
+        raise DocumentError(f"Не удалось прочитать PDF: {exc}") from exc
+    try:
+        return len(pdf)
+    finally:
+        pdf.close()
+
+
+def rasterize_pages(data: bytes) -> tuple[list[str], list[str]]:
+    """Страницы PDF в data-URL. Вызывается при ОТПРАВКЕ сообщения, в потоке.
+
+    Возвращает (картинки, предупреждения). Предел страниц — VISION_MAX_PAGES.
+    """
+    max_pages = settings.vision_max_pages
+    warnings: list[str] = []
+    if max_pages and max_pages > 0:
+        images = _pdf_rasterize(data, max_pages + 1)
+        if len(images) > max_pages:
+            images = images[:max_pages]
+            warnings.append(f"PDF обрезан до {max_pages} страниц (VISION_MAX_PAGES), "
+                            "остальное не обработано")
+    else:
+        images = _pdf_rasterize(data, 0)
+    if not images:
+        raise DocumentError("PDF не содержит страниц для распознавания")
+    return [_image_to_data_url(img) for img in images], warnings
+
+
 def _parse_pdf(data: bytes, doc: ParsedDocument, mode: str = "vision") -> None:
     """Режимы:
     - 'vision' (по умолчанию): страницы → картинки → mmproj (модель «видит» лист:
@@ -304,27 +346,16 @@ def _parse_pdf(data: bytes, doc: ParsedDocument, mode: str = "vision") -> None:
                 "В PDF нет текстового слоя — выберите режим «как картинку»")
         # auto: текста нет → падаем в vision ниже
 
-    # vision (по умолчанию) или auto без текста — распознаёт мультимодальная модель.
-    # Каждая страница — отдельная полная картинка. По умолчанию берём ВСЕ страницы
-    # (VISION_MAX_PAGES=0); положительный лимит — предохранитель от переполнения
-    # контекста (каждая страница = картинка на сотни-тысячи токенов).
-    max_pages = settings.vision_max_pages
-    if max_pages and max_pages > 0:
-        images = _pdf_rasterize(data, max_pages + 1)
-        if len(images) > max_pages:
-            images = images[:max_pages]
-            doc.warnings.append(
-                f"PDF обрезан до {max_pages} страниц (VISION_MAX_PAGES), "
-                "остальное не обработано")
-    else:
-        images = _pdf_rasterize(data, 0)  # все страницы
-    if not images:
+    # vision — растеризацию откладываем до отправки: на 20 страницах это
+    # полминуты, и держать в ожидании закрепление файла (с заблокированной
+    # кнопкой «Отправить») незачем. Сейчас только считаем страницы — дёшево.
+    doc.pdf_pages = pdf_page_count(data)
+    if not doc.pdf_pages:
         raise DocumentError("PDF не содержит страниц для распознавания")
-    if len(images) >= 15:
+    if doc.pdf_pages >= 15:
         doc.warnings.append(
-            f"{len(images)} страниц отправлены картинками — это заметно заполнит "
+            f"{doc.pdf_pages} страниц уйдут картинками — это заметно заполнит "
             "контекст модели (следите за процентом контекста)")
-    doc.images = [_image_to_data_url(img) for img in images]
 
 
 # --- Точка входа ---
@@ -355,6 +386,6 @@ def parse_upload(filename: str, content_type: str, data: bytes,
         raise DocumentError(
             f"Не удалось разобрать файл «{filename}»: {type(exc).__name__}") from exc
 
-    if not doc.text.strip() and not doc.images:
+    if not doc.text.strip() and not doc.images and not doc.pdf_pages:
         raise DocumentError("Из файла не извлечено ни текста, ни изображений")
     return doc

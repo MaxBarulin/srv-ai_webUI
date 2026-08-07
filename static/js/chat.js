@@ -381,7 +381,9 @@ function renderAttachments() {
     head.className = "attach-head";
     const name = document.createElement("span");
     name.className = "attach-name";   // длинное имя обрезается, а не рвёт рамку
-    name.textContent = `${att.pending ? "⏳" : isImage ? "🖼" : "📄"} ${att.filename}`;
+    const pages = att.pdf_pages ? ` — ${att.pdf_pages} стр. картинками` : "";
+    name.textContent = `${att.pending ? "⏳" : isImage || att.pdf_pages ? "🖼" : "📄"} `
+      + `${att.filename}${pages}`;
     name.title = att.filename;
     head.appendChild(name);
     if (att.pending) chip.classList.add("attach-chip-pending");
@@ -1234,13 +1236,19 @@ async function sendMessage() {
 function onAttachmentEvent(st, userNode, data) {
   const { live, liveBody } = st;
   let note = live.querySelector(".attach-progress");
+  if (data.status === "pages") {
+    if (note) note.textContent = `🖼 «${data.filename}»: страниц нарисовано — ${data.pages}`;
+    return;
+  }
   if (data.status === "run") {
     if (!note) {
       note = document.createElement("div");
       note.className = "msg-note attach-progress";
       live.insertBefore(note, liveBody);
     }
-    note.textContent = `🖼 Расшифровываю «${data.filename}» — это как обычный ответ по времени`;
+    note.textContent = data.stage === "pages"
+      ? `🖼 Готовлю страницы «${data.filename}» — их надо нарисовать`
+      : `🖼 Расшифровываю «${data.filename}» — это как обычный ответ по времени`;
     return;
   }
   if (note) note.remove();
@@ -1269,6 +1277,7 @@ async function submitTurn(chatId, content, attachments) {
     role: "user",
     content,
     attachments: attachments.map((a) => ((a.images && a.images.length) || a.transcript
+                                        || a.pdf_token
       ? { filename: a.filename, image: true, transcript: a.transcript || "" }
       : { filename: a.filename, text: a.text || "" })),
   });
@@ -1301,7 +1310,7 @@ async function submitTurn(chatId, content, attachments) {
         enable_thinking: els.ctxThink.checked,
         attachments: attachments.map((a) => ({
           filename: a.filename, text: a.text || "", images: a.images || [],
-          transcript: a.transcript || "",
+          transcript: a.transcript || "", pdf_token: a.pdf_token || "",
         })),
       }),
       signal: st.ac.signal,

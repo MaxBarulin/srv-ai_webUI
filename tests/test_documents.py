@@ -170,52 +170,53 @@ def _pdf_with_text(text: str) -> bytes:
     return buf.getvalue()
 
 
-def test_pdf_scan_vision_path(monkeypatch):
-    # PDF без текстового слоя → растеризация → изображения (vision)
-    monkeypatch.setattr(documents, "settings",
-                        replace(settings, vision_max_pages=10))
-    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
+def test_pdf_vision_defers_rasterization(monkeypatch):
+    """Растеризация — самое долгое в разборе. При закреплении файла её быть не
+    должно: только пересчёт страниц, а рисование уже при отправке."""
+    called = []
     monkeypatch.setattr(documents, "_pdf_rasterize",
-                        lambda data, max_pages: [_png_bytes(), _png_bytes()])
+                        lambda data, max_pages: called.append(1) or [])
+    monkeypatch.setattr(documents, "pdf_page_count", lambda data: 7)
     doc = parse_upload("scan.pdf", "application/pdf", b"%PDF-1.4 fake")
-    assert len(doc.images) == 2
-    assert all(u.startswith("data:image/png") for u in doc.images)
+    assert doc.pdf_pages == 7
+    assert doc.images == [] and not called
+    assert doc.token_estimate > 0        # оценка считается по будущим страницам
 
 
-def test_pdf_scan_page_limit(monkeypatch):
-    monkeypatch.setattr(documents, "settings",
-                        replace(settings, vision_max_pages=2))
-    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
+def test_many_pages_warned_at_attach(monkeypatch):
+    monkeypatch.setattr(documents, "pdf_page_count", lambda data: 40)
+    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
+    assert any("40 страниц" in w for w in doc.warnings)
+
+
+def test_rasterize_pages_respects_limit(monkeypatch):
+    """VISION_MAX_PAGES действует при отправке, там же где и рисование."""
+    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=2))
     monkeypatch.setattr(documents, "_pdf_rasterize",
                         lambda data, max_pages: [_png_bytes() for _ in range(5)])
-    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
-    assert len(doc.images) == 2
-    assert any("обрезан" in w for w in doc.warnings)
+    images, warns = documents.rasterize_pages(b"%PDF fake")
+    assert len(images) == 2
+    assert all(u.startswith("data:image/png") for u in images)
+    assert any("обрезан" in w for w in warns)
 
 
-def test_pdf_vision_all_pages_when_no_limit(monkeypatch):
-    """VISION_MAX_PAGES=0 — отправляем ВСЕ страницы, без обрезки."""
+def test_rasterize_pages_all_when_no_limit(monkeypatch):
     monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=0))
-    monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
-    # 12 страниц — при старом лимите 10 обрезалось бы; теперь все 12
     monkeypatch.setattr(documents, "_pdf_rasterize",
                         lambda data, max_pages: [_png_bytes() for _ in range(12)])
-    doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake")
-    assert len(doc.images) == 12
-    assert not any("обрезан" in w for w in doc.warnings)
+    images, warns = documents.rasterize_pages(b"%PDF fake")
+    assert len(images) == 12 and not warns
 
 
 def test_pdf_default_vision_ignores_text_layer(monkeypatch):
     """По умолчанию (pdf_mode=vision) PDF идёт в картинки, даже если есть
     текстовый слой — модель «видит» лист."""
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=10))
     monkeypatch.setattr(documents, "_pdf_text",
                         lambda data: "Есть текстовый слой, но он игнорируется")
-    monkeypatch.setattr(documents, "_pdf_rasterize",
-                        lambda data, max_pages: [_png_bytes()])
+    monkeypatch.setattr(documents, "pdf_page_count", lambda data: 1)
     doc = parse_upload("doc.pdf", "application/pdf", b"%PDF fake")
-    assert doc.text == ""
-    assert len(doc.images) == 1
+    assert doc.text == "" and doc.pdf_pages == 1
+
 
 
 def test_pdf_text_mode_extracts_text(monkeypatch):
@@ -238,13 +239,11 @@ def test_pdf_text_mode_no_layer_errors(monkeypatch):
 
 
 def test_pdf_auto_mode_falls_back_to_vision(monkeypatch):
-    """pdf_mode=auto — текст, если есть; иначе картинки (прежнее поведение)."""
-    monkeypatch.setattr(documents, "settings", replace(settings, vision_max_pages=10))
+    """auto: текста нет → страницы уйдут картинками (нарисуются при отправке)."""
     monkeypatch.setattr(documents, "_pdf_text", lambda data: "")
-    monkeypatch.setattr(documents, "_pdf_rasterize",
-                        lambda data, max_pages: [_png_bytes()])
+    monkeypatch.setattr(documents, "pdf_page_count", lambda data: 2)
     doc = parse_upload("scan.pdf", "application/pdf", b"%PDF fake", pdf_mode="auto")
-    assert len(doc.images) == 1
+    assert doc.text == "" and doc.pdf_pages == 2
 
 
 def _blank_pdf(pages: int) -> bytes:
@@ -674,3 +673,66 @@ def test_office_zip_bomb_rejected():
     with pytest.raises(DocumentError, match="распакованный размер"):
         parse_upload("bomb.docx", "application/octet-stream", data)
 
+
+
+# --- PDF: рисование перенесено в отправку ---
+
+def _pdf_bytes(pages: int = 3) -> bytes:
+    from PIL import Image
+    ims = [Image.new("RGB", (300, 400), (255, 255, 255)) for _ in range(pages)]
+    buf = io.BytesIO()
+    ims[0].save(buf, format="PDF", save_all=True, append_images=ims[1:])
+    return buf.getvalue()
+
+
+def test_upload_pdf_returns_token_not_images(client, doc_user):
+    """Закрепление отдаёт число страниц и токен; картинок ещё нет."""
+    r = client.post("/api/attachments",
+                    files={"file": ("scan.pdf", _pdf_bytes(3), "application/pdf")},
+                    data={"pdf_mode": "vision"})
+    body = r.json()
+    assert r.status_code == 200
+    assert body["images"] == []
+    assert body["pdf_pages"] == 3 and body["pdf_token"]
+
+
+def test_pdf_rasterized_on_send(client, doc_user, monkeypatch):
+    captured = _spy_llm(monkeypatch)
+    token = client.post("/api/attachments",
+                        files={"file": ("scan.pdf", _pdf_bytes(2), "application/pdf")},
+                        data={"pdf_mode": "vision"}).json()["pdf_token"]
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "Что на листах?", "use_tools": False,
+        "attachments": [{"filename": "scan.pdf", "pdf_token": token}]})
+    assert r.status_code == 200
+
+    events = [(e, d) for e, d in _parse_sse(r.text) if e == "attachment"]
+    assert [d["status"] for _, d in events][:2] == ["run", "pages"]
+    assert events[1][1]["pages"] == 2
+
+    # Картинки страниц ушли модели именно на этом ходу
+    sent = captured[0][-1]
+    assert isinstance(sent["content"], list)
+    assert sum(1 for p in sent["content"] if p["type"] == "image_url") == 2
+
+
+def test_pdf_token_is_single_use_and_scoped(client, doc_user, make_user):
+    from app.pending_pdf import take
+    token = client.post("/api/attachments",
+                        files={"file": ("scan.pdf", _pdf_bytes(1), "application/pdf")},
+                        data={"pdf_mode": "vision"}).json()["pdf_token"]
+    uid = client.get("/api/me").json()["id"]
+    assert take(token, uid + 999) is None      # чужому не отдаём
+    assert take(token, uid) is not None
+    assert take(token, uid) is None            # одноразовый
+
+
+def test_expired_pdf_token_reports_clearly(client, doc_user):
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    r = client.post(f"/api/chats/{chat_id}/messages", json={
+        "content": "вопрос", "use_tools": False,
+        "attachments": [{"filename": "scan.pdf", "pdf_token": "нет-такого"}]})
+    errors = [d for e, d in _parse_sse(r.text)
+              if e == "attachment" and d["status"] == "error"]
+    assert errors and "приложите заново" in errors[0]["detail"]
