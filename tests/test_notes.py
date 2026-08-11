@@ -242,6 +242,48 @@ def test_order_ignores_foreign_ids(client, make_user, notes_user):
     assert [n["id"] for n in client.get("/api/notes").json()] == [mine]
 
 
+def test_manual_order_of_unpinned(client, notes_user):
+    """Обычные заметки тоже переставляются перетаскиванием — своей группой."""
+    ids = [client.post("/api/notes", json={"title": f"О{i}"}).json()["id"] for i in range(3)]
+    order = [ids[0], ids[2], ids[1]]
+    assert client.put("/api/notes/order", json={"ids": order}).status_code == 200
+    assert [n["id"] for n in client.get("/api/notes").json()] == order
+
+
+def test_order_keeps_groups_apart(client, notes_user):
+    """Закреплённые остаются наверху, как бы ни пришёл порядок обычных."""
+    ids = [client.post("/api/notes", json={"title": f"З{i}"}).json()["id"] for i in range(3)]
+    client.put(f"/api/notes/{ids[0]}/pin", json={"pinned": True})
+    # Разнородный список: закреплённая + обычная. Группу берём по первой
+    # видимой, остальное молча пропускаем — перемешать группы нельзя.
+    client.put("/api/notes/order", json={"ids": [ids[1], ids[0], ids[2]]})
+    listed = client.get("/api/notes").json()
+    assert listed[0]["id"] == ids[0] and listed[0]["pinned"] is True
+    assert [n["id"] for n in listed[1:]] == [ids[1], ids[2]]
+
+
+def test_order_under_filter_does_not_move_hidden(client, notes_user):
+    """Перестановка при включённом фильтре не должна двигать заметки, которых
+    пользователь сейчас не видит: присланные ложатся на свои же места."""
+    ids = []
+    for i in range(4):
+        tags = ["метка"] if i in (1, 3) else []
+        ids.append(client.post("/api/notes",
+                               json={"title": f"Ф{i}", "tags": tags}).json()["id"])
+    # Полный порядок — по дате, сверху свежая: 3, 2, 1, 0
+    assert [n["id"] for n in client.get("/api/notes").json()] == ids[::-1]
+
+    # Под фильтром видны только 3 и 1; меняем их местами
+    shown = [n["id"] for n in client.get("/api/notes?tags=метка").json()]
+    assert shown == [ids[3], ids[1]]
+    client.put("/api/notes/order", json={"ids": [ids[1], ids[3]]})
+
+    # Места 0 и 2 в полном списке заняли ими же, но в новом порядке;
+    # заметки 2 и 0 остались на своих местах.
+    assert [n["id"] for n in client.get("/api/notes").json()] == \
+        [ids[1], ids[2], ids[3], ids[0]]
+
+
 def test_prefs_removed_with_note(client, notes_user):
     import sqlite3
     note_id = client.post("/api/notes", json={"title": "На удаление"}).json()["id"]

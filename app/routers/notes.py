@@ -107,8 +107,9 @@ async def list_notes(
         conditions.append("(',' || n.tags || ',') LIKE ?")
         params.append(f"%,{tag},%")
 
-    # Закреплённые — наверху и в своём, заданном перетаскиванием порядке;
-    # остальные по дате изменения, как и раньше.
+    # Закреплённые — наверху. Внутри каждой группы порядок ручной (задан
+    # перетаскиванием плиток), а не переставленные ещё заметки лежат с
+    # sort_order = 0 и разбираются по дате изменения, как и раньше.
     cursor = await db.execute(
         SELECT_NOTE + "WHERE " + " AND ".join(conditions)
         # id в конце — чтобы ничья по дате разрешалась одинаково при каждом
@@ -124,7 +125,7 @@ class PinRequest(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    ids: list[int]   # порядок закреплённых, сверху вниз
+    ids: list[int]   # порядок одной группы (закреплённых ИЛИ обычных), сверху вниз
 
 
 async def _set_pref(db: aiosqlite.Connection, user_id: int, note_id: int,
@@ -144,23 +145,60 @@ async def _set_pref(db: aiosqlite.Connection, user_id: int, note_id: int,
         (user_id, note_id, *fields.values(), *fields.values()))
 
 
+async def _group_order(db: aiosqlite.Connection, user: dict, pinned: int) -> list[int]:
+    """Полный порядок одной группы (закреплённых или обычных) — как в списке."""
+    cursor = await db.execute(
+        "SELECT n.id FROM notes n "
+        "LEFT JOIN note_prefs p ON p.note_id = n.id AND p.user_id = ? "
+        f"WHERE {VISIBLE} AND COALESCE(p.pinned, 0) = ? "
+        "ORDER BY COALESCE(p.sort_order, 0), n.updated_at DESC, n.id DESC",
+        [user["id"], *visible_params(user), pinned])
+    return [row["id"] for row in await cursor.fetchall()]
+
+
 @router.put("/order")
-async def set_pinned_order(
+async def set_notes_order(
     payload: OrderRequest,
     user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> dict:
-    """Порядок закреплённых заметок — личный, задаётся перетаскиванием плиток.
+    """Порядок заметок — личный, задаётся перетаскиванием плиток.
+
+    Приходит порядок одной группы: закреплённых или обычных. Смешать их
+    нельзя — ORDER BY ставит pinned DESC раньше sort_order, и группы всё
+    равно останутся по разные стороны.
+
+    Присланные заметки раскладываются по тем местам, которые они занимали в
+    полной группе. Это важно при включённом фильтре: на экране тогда лишь
+    часть заметок, и нумеровать их подряд означало бы двигать те, которых
+    пользователь сейчас не видит.
 
     Чужие и невидимые идентификаторы молча пропускаем: список приходит из
     интерфейса, и подсунуть в него чужую заметку не должно ничего менять.
     """
-    for position, note_id in enumerate(payload.ids):
+    visible: list[int] = []
+    pinned: int | None = None
+    for note_id in dict.fromkeys(payload.ids):
         cursor = await db.execute(
-            f"SELECT n.id FROM notes n WHERE n.id = ? AND {VISIBLE}",
-            [note_id, *visible_params(user)])
-        if await cursor.fetchone() is None:
+            "SELECT COALESCE(p.pinned, 0) AS pinned FROM notes n "
+            "LEFT JOIN note_prefs p ON p.note_id = n.id AND p.user_id = ? "
+            f"WHERE n.id = ? AND {VISIBLE}",
+            [user["id"], note_id, *visible_params(user)])
+        row = await cursor.fetchone()
+        # Группу берём по первой видимой заметке: перетаскивание идёт внутри
+        # одной, а разнородный список — не наш интерфейс, и мы его не слушаем.
+        if row is None or (pinned is not None and row["pinned"] != pinned):
             continue
+        pinned = row["pinned"]
+        visible.append(note_id)
+    if not visible:
+        return {"ok": True}
+
+    full = await _group_order(db, user, pinned)
+    seen = set(visible) & set(full)
+    moved = iter([note_id for note_id in visible if note_id in seen])
+    for position, note_id in enumerate(
+            [next(moved) if nid in seen else nid for nid in full]):
         await _set_pref(db, user["id"], note_id, sort_order=position)
     await db.commit()
     return {"ok": True}
@@ -180,9 +218,10 @@ async def set_pinned(
         "SELECT MIN(sort_order) FROM note_prefs WHERE user_id = ? AND pinned = 1",
         (user["id"],))
     top = (await cursor.fetchone())[0]
-    # При откреплении ручной порядок сбрасываем: иначе заметка со старым
-    # отрицательным sort_order всплывала бы в начало НЕзакреплённой части,
-    # хотя там порядок должен быть по дате.
+    # При откреплении ручной порядок сбрасываем в 0: со старым отрицательным
+    # sort_order заметка встала бы впереди обычных, но и это место у обычных
+    # теперь занято ручным порядком. 0 — «сверху обычных», как и у только что
+    # созданной заметки: место видное и предсказуемое.
     order = ((top - 1) if top is not None else 0) if payload.pinned else 0
     await _set_pref(db, user["id"], note_id, pinned=int(payload.pinned),
                     sort_order=order)

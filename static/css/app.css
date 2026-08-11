@@ -1349,7 +1349,9 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
 }
 .note-tile-meta .badge.more { max-width: none; border-style: dashed; }
 .note-tile-date { margin-left: auto; color: var(--osk-slate); white-space: nowrap; }
-.note-back { margin-right: 10px; }
+/* Возврат к плиткам. flex: none и nowrap обязательны: в одном ряду с длинным
+   заголовком кнопка сжималась и «← Все заметки» ломалось на две строки. */
+.note-back { margin-right: 10px; flex: none; white-space: nowrap; }
 /* Булавка чата — слева от названия. У незакреплённого прячется вместе с
    остальными действиями (✎ ✕) и всплывает по наведению, а у закреплённого
    видна всегда: иначе не понять, что чат закреплён, не поводив мышью. */
@@ -1371,8 +1373,19 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
-.note-view-head h3 { margin: 0; font-size: 20px; }
+/* Заголовок — отдельной строкой под панелью кнопок. В одном ряду с ними ему
+   в узком окне оставалась колонка в два слова, и он растягивался на девять
+   строк; на своей строке он одинаково опрятен при любой ширине. */
+.note-view-head h3 {
+  margin: 6px 0 0;
+  font-size: 20px;
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  order: 2;
+}
 .note-view-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .note-meta { margin-top: 8px; font-size: 12.5px; color: var(--osk-slate); }
 .note-tags { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }

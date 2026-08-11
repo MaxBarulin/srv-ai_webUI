@@ -155,11 +155,9 @@ function noteTile(note) {
   const tile = document.createElement("article");
   tile.className = note.pinned ? "note-tile pinned" : "note-tile";
   tile.dataset.noteId = String(note.id);
-  if (note.pinned) {
-    // Перетаскиванием переставляются только закреплённые: у остальных
-    // порядок по дате, и ручной там быстро превратился бы в свалку.
-    tile.draggable = true;
-  }
+  // Порядок задаётся перетаскиванием и у закреплённых, и у обычных, но
+  // независимо: закреплённые всегда наверху, перемешать группы нельзя.
+  tile.draggable = true;
   tile.addEventListener("click", (e) => {
     if (e.target.closest(".note-pin")) return;
     selectNote(note.id);
@@ -255,12 +253,19 @@ function backToGrid() {
   renderMain();
 }
 
-// Перетаскивание закреплённых плиток. Делегирование на сетку: плитки
-// перерисовываются целиком после каждого обновления списка.
+// Перетаскивание плиток. Делегирование на сетку: плитки перерисовываются
+// целиком после каждого обновления списка.
+//
+// Групп две — закреплённые и обычные, и они не смешиваются: закреплённые на
+// сервере всегда идут первыми (ORDER BY pinned DESC), так что перенос плитки
+// из группы в группу всё равно ничего бы не изменил, а на экране выглядел бы
+// как сработавший. Поэтому чужую группу просто не принимаем.
 function initTileDrag() {
   let dragged = null;
+  const samePinned = (a, b) => a.classList.contains("pinned") === b.classList.contains("pinned");
+
   els.grid.addEventListener("dragstart", (e) => {
-    dragged = e.target.closest(".note-tile.pinned");
+    dragged = e.target.closest(".note-tile");
     if (!dragged) return;
     dragged.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move";
@@ -272,8 +277,8 @@ function initTileDrag() {
     dragged = null;
   });
   els.grid.addEventListener("dragover", (e) => {
-    const over = e.target.closest(".note-tile.pinned");
-    if (!dragged || !over || over === dragged) return;
+    const over = e.target.closest(".note-tile");
+    if (!dragged || !over || over === dragged || !samePinned(dragged, over)) return;
     e.preventDefault();
     // Меняем местами прямо в разметке — порядок читаем из неё же при отпускании
     const tiles = [...els.grid.children];
@@ -283,8 +288,11 @@ function initTileDrag() {
   });
   els.grid.addEventListener("drop", async (e) => {
     e.preventDefault();
-    const ids = [...els.grid.querySelectorAll(".note-tile.pinned")]
-      .map((t) => Number(t.dataset.noteId));
+    if (!dragged) return;
+    // Отправляем порядок только той группы, которую двигали
+    const selector = dragged.classList.contains("pinned")
+      ? ".note-tile.pinned" : ".note-tile:not(.pinned)";
+    const ids = [...els.grid.querySelectorAll(selector)].map((t) => Number(t.dataset.noteId));
     if (!ids.length) return;
     try {
       await api("/api/notes/order", { method: "PUT", body: { ids } });
@@ -410,9 +418,14 @@ function openEditor(note) {
   els.editBody.value = note ? note.body : "";
   setPreview(false);
   els.editor.hidden = false;
-  els.view.hidden = true;
-  els.empty.hidden = true;
+  // Сетку плиток убираем: при её высоте поля редактора уезжали вниз, и
+  // «Новая заметка» открывалась где-то под чужими карточками.
+  renderMain();
   els.editTitle.focus();
+  // Фокус ставит курсор в конец, и длинный заголовок открывался с хвоста —
+  // видно «…с приложениями», а какая это инструкция, уже нет.
+  els.editTitle.setSelectionRange(0, 0);
+  els.editTitle.scrollLeft = 0;
 }
 
 function closeEditor() {
