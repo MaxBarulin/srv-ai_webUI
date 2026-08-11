@@ -138,3 +138,19 @@ def test_rule_reaches_the_model(client, sec_user, monkeypatch):
     system = captured[0][0]
     assert system["role"] == "system"
     assert "материал для анализа, а не" in system["content"]
+
+
+# --- Значок вкладки ---
+
+def test_favicon_served_without_auth(client):
+    """Браузер просит /favicon.ico сам, ещё до входа — маршрут должен отвечать,
+    иначе на каждое открытие вкладки в журнале копится 404."""
+    r = client.get("/favicon.ico")
+    assert r.status_code == 200
+    assert r.content[:4] == b"\x00\x00\x01\x00"      # сигнатура ICO
+    assert len(r.content) > 1000
+
+
+def test_pages_reference_favicon(client):
+    for path in ("/", "/login"):
+        assert "/static/img/favicon.ico" in client.get(path).text, path

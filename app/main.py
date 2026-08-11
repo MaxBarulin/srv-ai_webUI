@@ -114,4 +114,12 @@ async def login_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "login.html")
 
 
+# Браузер просит /favicon.ico сам, ещё до того как разберёт <link> в странице —
+# без этого маршрута в журнале копились 404 на каждое открытие вкладки.
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(STATIC_DIR / "img" / "favicon.ico",
+                        media_type="image/x-icon")
+
+
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
