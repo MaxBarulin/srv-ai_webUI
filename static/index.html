@@ -40,7 +40,6 @@
             <option value="shared">Общие</option>
           </select>
         </div>
-        <ul class="notes-list" id="notes-list"></ul>
       </div>
 
       <div class="sidebar-user">
@@ -133,13 +132,18 @@
         <section id="section-notes" hidden>
           <div class="notes-layout">
             <div class="notes-main">
-              <div class="notes-empty" id="note-empty">
-                <div class="display">Заметка не выбрана</div>
-                <p>Выберите заметку из списка или создайте новую.</p>
+              <div class="notes-grid-wrap" id="notes-grid-wrap">
+                <div class="notes-empty" id="note-empty" hidden>
+                  <div class="display">Заметок нет</div>
+                  <p>Создайте первую или измените условия поиска.</p>
+                </div>
+                <div class="notes-grid" id="notes-grid"></div>
               </div>
 
               <article class="note-view" id="note-view" hidden>
                 <div class="note-view-head">
+                  <button type="button" class="btn btn-small note-back" id="note-back-btn"
+                          title="Ко всем заметкам">← Все заметки</button>
                   <h3 id="note-view-title"></h3>
                   <div class="note-view-actions">
                     <button type="button" class="btn btn-small" id="note-pdf-btn"

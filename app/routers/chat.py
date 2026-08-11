@@ -100,6 +100,7 @@ class ChatUpdateRequest(BaseModel):
     use_calc: bool | None = None          # пер-чатовый тумблер «Расчёты» (§17)
     enable_thinking: bool | None = None   # пер-чатовый тумблер «Размышления»
     pdf_mode: str | None = None           # режим парсинга PDF: vision | text | auto
+    pinned: bool | None = None            # закреплённый чат — наверху списка
 
 
 class Attachment(BaseModel):
@@ -128,7 +129,7 @@ async def _get_own_chat(db: aiosqlite.Connection, chat_id: int, user_id: int) ->
     cursor = await db.execute(
         "SELECT id, title, specialization_id, custom_prompt, use_tools, use_calc, "
         "enable_thinking, "
-        "pdf_mode, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
+        "pdf_mode, pinned, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?",
         (chat_id, user_id),
     )
     row = await cursor.fetchone()
@@ -145,8 +146,8 @@ async def list_chats(
     cursor = await db.execute(
         "SELECT id, title, specialization_id, custom_prompt, use_tools, use_calc, "
         "enable_thinking, "
-        "pdf_mode, created_at, updated_at FROM chats WHERE user_id = ? "
-        "ORDER BY updated_at DESC, id DESC",
+        "pdf_mode, pinned, created_at, updated_at FROM chats WHERE user_id = ? "
+        "ORDER BY pinned DESC, updated_at DESC, id DESC",
         (user["id"],),
     )
     return [dict(row) for row in await cursor.fetchall()]
@@ -180,7 +181,7 @@ async def create_chat(
     await db.commit()
     return {"id": cursor.lastrowid, "title": title, "specialization_id": spec_id,
             "custom_prompt": custom_prompt, "use_tools": 1, "use_calc": 1, "enable_thinking": 1,
-            "pdf_mode": "text", "created_at": now, "updated_at": now}
+            "pdf_mode": "text", "pinned": 0, "created_at": now, "updated_at": now}
 
 
 @router.put("/{chat_id}")
@@ -228,12 +229,19 @@ async def update_chat(
             raise HTTPException(status_code=400, detail="Недопустимый режим PDF")
         pdf_mode = payload.pdf_mode
 
+    pinned = row["pinned"]
+    if "pinned" in provided and payload.pinned is not None:
+        pinned = int(payload.pinned)
+
+    # updated_at не трогаем при закреплении: иначе чат подпрыгивал бы в списке
+    # и «недавние» перестали бы быть недавними от одного нажатия булавки.
+    touch = not (provided <= {"pinned"})
     await db.execute(
         "UPDATE chats SET title = ?, specialization_id = ?, custom_prompt = ?, "
-        "use_tools = ?, use_calc = ?, enable_thinking = ?, pdf_mode = ?, "
+        "use_tools = ?, use_calc = ?, enable_thinking = ?, pdf_mode = ?, pinned = ?, "
         "updated_at = ? WHERE id = ?",
         (title, spec_id, custom_prompt, use_tools, use_calc, enable_thinking, pdf_mode,
-         utcnow_iso(), chat_id),
+         pinned, utcnow_iso() if touch else row["updated_at"], chat_id),
     )
     await db.commit()
     return dict(await _get_own_chat(db, chat_id, user["id"]))

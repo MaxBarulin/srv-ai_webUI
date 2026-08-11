@@ -160,6 +160,9 @@ async def delete_user(
         "DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE user_id = ?)",
         (user_id,))
     await db.execute("DELETE FROM chats WHERE user_id = ?", (user_id,))
+    await db.execute(
+        "DELETE FROM note_prefs WHERE user_id = ? OR note_id IN "
+        "(SELECT id FROM notes WHERE owner_id = ?)", (user_id, user_id))
     await db.execute("DELETE FROM notes WHERE owner_id = ?", (user_id,))
     await db.execute("DELETE FROM events WHERE owner_id = ?", (user_id,))
     await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))

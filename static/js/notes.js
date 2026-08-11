@@ -22,7 +22,9 @@ export function initNotes(toastFn, currentUser) {
   canChooseGroup = currentUser.role === "admin" ||
     currentUser.group_id === null || currentUser.group_id === undefined;
   Object.assign(els, {
-    list: $("notes-list"),
+    grid: $("notes-grid"),
+    gridWrap: $("notes-grid-wrap"),
+    backBtn: $("note-back-btn"),
     search: $("notes-search"),
     tags: $("notes-tags"),
     scope: $("notes-scope"),
@@ -72,6 +74,8 @@ export function initNotes(toastFn, currentUser) {
 
   els.tabEdit.addEventListener("click", () => setPreview(false));
   els.tabPreview.addEventListener("click", () => setPreview(true));
+  els.backBtn.addEventListener("click", backToGrid);
+  initTileDrag();
 
   // Кнопку «Копировать» в блоках кода рисует общий markdown-рендер, а работать
   // она обязана и здесь, а не только в чате.
@@ -136,38 +140,141 @@ async function refreshList() {
   renderMain();
 }
 
+// Плитки заметок в главной области. Закреплённые — первыми и в порядке,
+// заданном перетаскиванием (порядок личный, см. note_prefs).
 function renderList() {
-  els.list.replaceChildren(...notes.map((note) => {
-    const li = document.createElement("li");
-    li.className = note.id === activeNoteId ? "note-item active" : "note-item";
-    li.addEventListener("click", () => selectNote(note.id));
+  const items = notes.map(noteTile);
+  els.grid.replaceChildren(...items);
+  els.empty.hidden = notes.length > 0;
+}
 
-    const title = document.createElement("div");
-    title.className = "note-item-title";
-    title.textContent = note.title;
-    li.appendChild(title);
+function noteTile(note) {
+  const tile = document.createElement("article");
+  tile.className = note.pinned ? "note-tile pinned" : "note-tile";
+  tile.dataset.noteId = String(note.id);
+  if (note.pinned) {
+    // Перетаскиванием переставляются только закреплённые: у остальных
+    // порядок по дате, и ручной там быстро превратился бы в свалку.
+    tile.draggable = true;
+  }
+  tile.addEventListener("click", (e) => {
+    if (e.target.closest(".note-pin")) return;
+    selectNote(note.id);
+  });
 
-    const meta = document.createElement("div");
-    meta.className = "note-item-meta";
-    const scopeBadge = document.createElement("span");
-    scopeBadge.className = note.scope === "shared" ? "badge shared" : "badge";
-    scopeBadge.textContent = note.scope === "shared" ? "общая" : "личная";
-    meta.appendChild(scopeBadge);
-    if (note.scope === "shared" && note.group_name) {
-      const groupBadge = document.createElement("span");
-      groupBadge.className = "badge group";
-      groupBadge.textContent = note.group_name;
-      meta.appendChild(groupBadge);
+  const head = document.createElement("div");
+  head.className = "note-tile-head";
+  const title = document.createElement("h4");
+  title.className = "note-tile-title";
+  title.textContent = note.title;
+  head.appendChild(title);
+
+  const pin = document.createElement("button");
+  pin.type = "button";
+  pin.className = note.pinned ? "note-pin on" : "note-pin";
+  pin.textContent = "📌";
+  pin.title = note.pinned ? "Открепить" : "Закрепить наверху";
+  pin.addEventListener("click", () => togglePin(note));
+  head.appendChild(pin);
+  tile.appendChild(head);
+
+  const snippet = document.createElement("p");
+  snippet.className = "note-tile-body";
+  snippet.textContent = plainSnippet(note.body);
+  tile.appendChild(snippet);
+
+  const meta = document.createElement("div");
+  meta.className = "note-tile-meta";
+  const scopeBadge = document.createElement("span");
+  scopeBadge.className = note.scope === "shared" ? "badge shared" : "badge";
+  scopeBadge.textContent = note.scope === "shared" ? "общая" : "личная";
+  meta.appendChild(scopeBadge);
+  if (note.scope === "shared" && note.group_name) {
+    const groupBadge = document.createElement("span");
+    groupBadge.className = "badge group";
+    groupBadge.textContent = note.group_name;
+    meta.appendChild(groupBadge);
+  }
+  for (const t of note.tags) {
+    const tag = document.createElement("span");
+    tag.className = "badge tag";
+    tag.textContent = t;
+    meta.appendChild(tag);
+  }
+  const when = document.createElement("span");
+  when.className = "note-tile-date";
+  when.textContent = fmtDate(note.updated_at);
+  meta.appendChild(when);
+  tile.appendChild(meta);
+  return tile;
+}
+
+// Первые строки заметки без разметки — на плитке нужен смысл, а не решётки
+function plainSnippet(body) {
+  return (body || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[#>*_`|-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+}
+
+async function togglePin(note) {
+  try {
+    await api(`/api/notes/${note.id}/pin`, { method: "PUT",
+                                             body: { pinned: !note.pinned } });
+    await refreshList();
+  } catch (e) {
+    toast(e.detail || "Не удалось закрепить заметку", true);
+  }
+}
+
+function backToGrid() {
+  activeNoteId = null;
+  closeEditor();
+  renderList();
+  renderMain();
+}
+
+// Перетаскивание закреплённых плиток. Делегирование на сетку: плитки
+// перерисовываются целиком после каждого обновления списка.
+function initTileDrag() {
+  let dragged = null;
+  els.grid.addEventListener("dragstart", (e) => {
+    dragged = e.target.closest(".note-tile.pinned");
+    if (!dragged) return;
+    dragged.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox не начинает перетаскивание, пока в dataTransfer пусто
+    e.dataTransfer.setData("text/plain", dragged.dataset.noteId);
+  });
+  els.grid.addEventListener("dragend", () => {
+    if (dragged) dragged.classList.remove("dragging");
+    dragged = null;
+  });
+  els.grid.addEventListener("dragover", (e) => {
+    const over = e.target.closest(".note-tile.pinned");
+    if (!dragged || !over || over === dragged) return;
+    e.preventDefault();
+    // Меняем местами прямо в разметке — порядок читаем из неё же при отпускании
+    const tiles = [...els.grid.children];
+    const from = tiles.indexOf(dragged);
+    const to = tiles.indexOf(over);
+    over.insertAdjacentElement(from < to ? "afterend" : "beforebegin", dragged);
+  });
+  els.grid.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    const ids = [...els.grid.querySelectorAll(".note-tile.pinned")]
+      .map((t) => Number(t.dataset.noteId));
+    if (!ids.length) return;
+    try {
+      await api("/api/notes/order", { method: "PUT", body: { ids } });
+      await refreshList();
+    } catch (err) {
+      toast(err.detail || "Не удалось сохранить порядок", true);
+      await refreshList();   // вернуть как было
     }
-    if (note.tags.length) {
-      const tags = document.createElement("span");
-      tags.className = "note-item-tags";
-      tags.textContent = note.tags.join(", ");
-      meta.appendChild(tags);
-    }
-    li.appendChild(meta);
-    return li;
-  }));
+  });
 }
 
 function selectNote(id) {
@@ -189,7 +296,10 @@ function fmtDate(iso) {
 function renderMain() {
   const editorOpen = !els.editor.hidden;
   const note = notes.find((n) => n.id === activeNoteId);
-  els.empty.hidden = Boolean(note) || editorOpen;
+  // Три состояния раздела: сетка плиток, просмотр заметки, редактор. Хранятся
+  // в модульных переменных, поэтому уход в чат и возврат ничего не сбрасывает:
+  // ушли из редактора — вернулись в редактор.
+  els.gridWrap.hidden = Boolean(note) || editorOpen;
   els.view.hidden = !note || editorOpen;
   if (!note || editorOpen) return;
 

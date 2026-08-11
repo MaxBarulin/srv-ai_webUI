@@ -404,3 +404,30 @@ def test_stats_persisted_on_assistant_message(client, ctrl_user):
     assert answer["stats"]["tokens_per_second"] == 18.5
     user_msg = [m for m in messages if m["role"] == "user"][-1]
     assert user_msg["stats"] is None
+
+
+# --- Закрепление чата ---
+
+def test_pinned_chat_first_and_survives(client, ctrl_user):
+    ids = [client.post("/api/chats", json={"title": f"Чат {i}"}).json()["id"] for i in range(3)]
+    assert [c["id"] for c in client.get("/api/chats").json()] == ids[::-1]
+
+    assert client.put(f"/api/chats/{ids[0]}", json={"pinned": True}).status_code == 200
+    listed = client.get("/api/chats").json()
+    assert listed[0]["id"] == ids[0] and listed[0]["pinned"] == 1
+    assert [c["id"] for c in listed[1:]] == ids[:0:-1]
+
+    client.put(f"/api/chats/{ids[0]}", json={"pinned": False})
+    assert [c["id"] for c in client.get("/api/chats").json()] == ids[::-1]
+
+
+def test_pinning_does_not_bump_updated_at(client, ctrl_user):
+    """Закрепление не должно двигать чат во времени: иначе «недавние»
+    перестают быть недавними от одного нажатия булавки."""
+    chat = client.post("/api/chats", json={"title": "Чат"}).json()
+    before = client.get("/api/chats").json()[0]["updated_at"]
+    client.put(f"/api/chats/{chat['id']}", json={"pinned": True})
+    assert client.get("/api/chats").json()[0]["updated_at"] == before
+    # А обычная правка — двигает
+    client.put(f"/api/chats/{chat['id']}", json={"title": "Другое имя"})
+    assert client.get("/api/chats").json()[0]["updated_at"] >= before

@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS notes (
     updated_by INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id);
+
+-- Как заметка показывается КОНКРЕТНОМУ человеку: закреплена ли и в каком
+-- порядке лежит среди закреплённых. Отдельной таблицей, а не колонками в
+-- notes: общую заметку видит весь отдел, и перетаскивание плитки у одного
+-- не должно менять порядок у остальных.
+CREATE TABLE IF NOT EXISTS note_prefs (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    note_id INTEGER NOT NULL REFERENCES notes(id),
+    pinned INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, note_id)
+);
 CREATE INDEX IF NOT EXISTS idx_notes_scope ON notes(scope);
 
 CREATE TABLE IF NOT EXISTS events (
@@ -177,6 +189,9 @@ _COLUMN_MIGRATIONS = [
     ("chats", "enable_thinking", "INTEGER NOT NULL DEFAULT 1"),
     # Режим парсинга PDF: 'vision' (страницы → mmproj) или 'text' (pypdf)
     ("chats", "pdf_mode", "TEXT NOT NULL DEFAULT 'vision'"),
+    # Закреплённый чат — наверху списка. У чата один владелец, поэтому хватает
+    # колонки; у заметок для того же нужна отдельная таблица (note_prefs).
+    ("chats", "pinned", "INTEGER NOT NULL DEFAULT 0"),
     # Статистика генерации ответа (токены, скорость, контекст) — под ответом
     ("messages", "stats_json", "TEXT"),
     # Группа (отдел/бюро) пользователя; NULL — без группы, видит все общие записи

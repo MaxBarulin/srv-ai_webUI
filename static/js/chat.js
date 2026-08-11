@@ -448,10 +448,33 @@ async function refreshChats() {
   updateInputState();
 }
 
+async function togglePin(chat) {
+  try {
+    // Закрепление не двигает updated_at: иначе чат подпрыгивал бы в списке.
+    await api(`/api/chats/${chat.id}`, { method: "PUT", body: { pinned: !chat.pinned } });
+    // Порядок перечитываем с сервера, а не пересортировываем на месте: у чатов,
+    // созданных в одну секунду, своя сортировка давала другой порядок, чем
+    // серверная (там ничья разрешается по id), и список прыгал после перезагрузки.
+    await refreshChats();
+  } catch (e) {
+    els.toast(e.detail || "Не удалось закрепить чат", true);
+  }
+}
+
 function renderChatList() {
   els.list.replaceChildren(...chats.map((chat) => {
     const li = document.createElement("li");
-    li.className = chat.id === activeChatId ? "chat-item active" : "chat-item";
+    li.className = "chat-item";
+    if (chat.id === activeChatId) li.classList.add("active");
+    if (chat.pinned) li.classList.add("pinned");
+
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = chat.pinned ? "chat-action chat-pin on" : "chat-action chat-pin";
+    pinBtn.textContent = "📌";
+    pinBtn.title = chat.pinned ? "Открепить" : "Закрепить наверху";
+    pinBtn.addEventListener("click", () => togglePin(chat));
+    li.appendChild(pinBtn);
 
     const titleBtn = document.createElement("button");
     titleBtn.type = "button";
