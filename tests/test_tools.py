@@ -33,7 +33,7 @@ def clean_data():
     yield
     conn = _connect()
     try:
-        for table in ("messages", "chats", "notes", "events"):
+        for table in ("messages", "chats", "note_prefs", "notes", "events"):
             conn.execute(f"DELETE FROM {table}")
         conn.commit()
     finally:
@@ -572,3 +572,58 @@ def test_iteration_limit_configurable(monkeypatch):
     # Значение не может быть нулём: цикл тогда не сделал бы ни одного круга
     monkeypatch.setenv("MAX_TOOL_ITERATIONS", "0")
     assert config.load_settings().max_tool_iterations == 1
+
+
+# --- Инструменты и личные настройки заметок (плитки, закрепление) ---
+
+def test_note_tools_unaffected_by_pinning(client, tool_user):
+    """Инструменты ходят в заметки своим запросом, мимо SELECT_NOTE с его
+    JOIN-ом на note_prefs. Закрепление не должно им мешать."""
+    _insert_note(tool_user, note_id=1, body="секретный текст")
+    assert client.put("/api/notes/1/pin", json={"pinned": True}).status_code == 200
+
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_SEARCH_NOTES найди заметку")
+    assert _events_of(events, "tool") == [{"label": "поиск по заметкам: найдено 1"}]
+
+    got = _send(client, chat_id, "TOOL_GET_NOTE прочитай заметку")
+    assert _events_of(got, "tool") == [{"label": "прочитана заметка «Тестовая заметка»"}]
+    assert "секретный текст" in "".join(d["text"] for d in _events_of(got, "content"))
+
+
+def test_note_renamed_by_tool_keeps_pin(client, tool_user):
+    """Правка заметки моделью не должна сбрасывать чужое закрепление."""
+    _insert_note(tool_user, note_id=1)
+    client.put("/api/notes/1/pin", json={"pinned": True})
+    chat_id = _new_chat(client)
+    _send(client, chat_id, "TOOL_RENAME_NOTE переименуй заметку")
+    note = [n for n in client.get("/api/notes").json() if n["id"] == 1][0]
+    assert note["title"] == "Новый заголовок"
+    assert note["pinned"] is True
+
+
+def test_note_deleted_by_tool_takes_prefs_with_it(client, tool_user):
+    """Удаление заметки инструментом уносит и личные настройки — как и
+    удаление через интерфейс. Иначе в note_prefs копятся сироты."""
+    _insert_note(tool_user, note_id=1)
+    client.put("/api/notes/1/pin", json={"pinned": True})
+
+    chat_id = _new_chat(client)
+    events = _send(client, chat_id, "TOOL_DELETE_NOTE удали заметку")
+    token = _events_of(events, "tool_confirm")[0]["token"]
+    assert client.post("/api/tools/confirm", json={"token": token}).status_code == 200
+
+    assert client.get("/api/notes").json() == []
+    conn = _connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM note_prefs").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_note_created_by_model_appears_unpinned(client, tool_user):
+    """Заметка от модели попадает в общий список плиток, не закреплённой."""
+    chat_id = _new_chat(client)
+    _send(client, chat_id, "TOOL_CREATE_NOTE создай заметку")
+    listed = client.get("/api/notes").json()
+    assert len(listed) == 1 and listed[0]["pinned"] is False

@@ -49,6 +49,8 @@ def call_signature(tc: dict) -> str:
     except (json.JSONDecodeError, TypeError):
         args = str(raw)
     return f"{name}:{args}"
+
+
 SEARCH_LIMIT = 20
 
 _SCOPE_PROP = {"type": "string", "enum": ["personal", "shared"],
@@ -575,6 +577,10 @@ async def _notes_delete(db, user, args):
     row = await _get_note(db, note_id, user)
     if row["owner_id"] != user["id"]:
         raise ToolError("Удалить заметку может только её автор")
+    # Личные настройки показа (закрепление, порядок) удаляются вместе с
+    # заметкой — как и в REST-пути. Их держат ВСЕ, кто видел общую заметку,
+    # а не только автор, поэтому чистим по note_id, без user_id.
+    await db.execute("DELETE FROM note_prefs WHERE note_id = ?", (note_id,))
     await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
     await db.commit()
     return ({"id": note_id, "status": "deleted"},
