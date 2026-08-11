@@ -12,6 +12,9 @@ let toast = () => {};
 let me = null;
 let canChooseGroup = false;
 
+// Сколько тегов помещается на плитку до счётчика «+N»
+const TILE_TAGS = 3;
+
 const els = {};
 
 function $(id) { return document.getElementById(id); }
@@ -180,26 +183,36 @@ function noteTile(note) {
 
   const snippet = document.createElement("p");
   snippet.className = "note-tile-body";
-  snippet.textContent = plainSnippet(note.body);
+  const text = plainSnippet(note.body);
+  snippet.textContent = text || "Без текста";
+  if (!text) snippet.classList.add("empty");
   tile.appendChild(snippet);
 
   const meta = document.createElement("div");
   meta.className = "note-tile-meta";
-  const scopeBadge = document.createElement("span");
-  scopeBadge.className = note.scope === "shared" ? "badge shared" : "badge";
-  scopeBadge.textContent = note.scope === "shared" ? "общая" : "личная";
-  meta.appendChild(scopeBadge);
-  if (note.scope === "shared" && note.group_name) {
-    const groupBadge = document.createElement("span");
-    groupBadge.className = "badge group";
-    groupBadge.textContent = note.group_name;
-    meta.appendChild(groupBadge);
+  // Метку «личная» не рисуем: личных большинство, и подписывать ими каждую
+  // плитку — шум. Новость — как раз общая заметка, её и помечаем.
+  if (note.scope === "shared") {
+    const scopeBadge = document.createElement("span");
+    scopeBadge.className = "badge shared";
+    scopeBadge.textContent = note.group_name || "общая";
+    scopeBadge.title = note.group_name ? `Общая заметка · ${note.group_name}` : "Общая заметка";
+    meta.appendChild(scopeBadge);
   }
-  for (const t of note.tags) {
+  // Тегов показываем три: одна заметка с восемью растягивала весь ряд сетки,
+  // и у соседних плиток появлялась дыра в полкарточки.
+  for (const t of note.tags.slice(0, TILE_TAGS)) {
     const tag = document.createElement("span");
     tag.className = "badge tag";
     tag.textContent = t;
     meta.appendChild(tag);
+  }
+  if (note.tags.length > TILE_TAGS) {
+    const rest = document.createElement("span");
+    rest.className = "badge tag more";
+    rest.textContent = `+${note.tags.length - TILE_TAGS}`;
+    rest.title = note.tags.slice(TILE_TAGS).join(", ");
+    meta.appendChild(rest);
   }
   const when = document.createElement("span");
   when.className = "note-tile-date";
@@ -209,11 +222,17 @@ function noteTile(note) {
   return tile;
 }
 
-// Первые строки заметки без разметки — на плитке нужен смысл, а не решётки
+// Первые строки заметки без разметки — на плитке нужен смысл, а не решётки.
+// Блоки кода и таблицы выбрасываем целиком: из таблицы получалась каша вроде
+// «Заголовок а б 1 2», по которой заметку не узнать.
 function plainSnippet(body) {
   return (body || "")
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/[#>*_`|-]/g, " ")
+    .split("\n")
+    .filter((line) => !/^\s*\|/.test(line) && !/^\s*[-|: ]+$/.test(line))
+    .join(" ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")   // ссылки — оставляем подпись
+    .replace(/[#>*_`~]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 220);

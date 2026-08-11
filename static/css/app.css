@@ -1267,6 +1267,10 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
 .notes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  /* Ряды одной высоты: содержимое плитки везде обрезано (заголовок — две
+     строки, текст — четыре, меток не больше четырёх), поэтому сетка не
+     вытянется по самой болтливой заметке, зато перестанет быть рваной. */
+  grid-auto-rows: 1fr;
   gap: 14px;
 }
 .note-tile {
@@ -1291,12 +1295,17 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   margin: 0;
   font-size: 14px;
   line-height: 1.3;
-  /* Длинный заголовок обрезаем двумя строками, а не рвём плитку */
+  /* Длинный заголовок обрезаем двумя строками, а не рвём плитку.
+     anywhere — про слитные слова вроде «Электрогазосварщикнаавтоматических»:
+     без него строка просто уезжает под край плитки без всякого многоточия. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
+/* Булавка у незакреплённой заметки не должна кричать, но и прятаться ей
+   нельзя — на сенсорном экране наведения нет вовсе. Держим бледной. */
 .note-pin {
   border: none;
   background: none;
@@ -1304,11 +1313,12 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   padding: 0;
   font-size: 13px;
   line-height: 1;
-  opacity: 0.25;
+  opacity: 0.35;
   filter: grayscale(1);
 }
-.note-pin:hover { opacity: 0.7; }
-.note-pin.on { opacity: 1; filter: none; }
+.note-tile:hover .note-pin { opacity: 0.8; }
+.note-pin:hover { opacity: 1; }
+.note-tile .note-pin.on { opacity: 1; filter: none; }
 .note-tile-body {
   flex: 1;
   margin: 0;
@@ -1319,7 +1329,9 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
+.note-tile-body.empty { font-style: italic; opacity: 0.55; }
 .note-tile-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1327,6 +1339,15 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   gap: 5px;
   font-size: 11px;
 }
+/* Метка «ГОСТ 19281-2014» или «корпусные конструкции» — обрезаем, иначе одна
+   метка занимает всю строку и остальные уходят на второй ряд. */
+.note-tile-meta .badge {
+  max-width: 13ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-tile-meta .badge.more { max-width: none; border-style: dashed; }
 .note-tile-date { margin-left: auto; color: var(--osk-slate); white-space: nowrap; }
 .note-back { margin-right: 10px; }
 /* Булавка чата — слева от названия. У незакреплённого прячется вместе с
