@@ -57,6 +57,13 @@ _CONTEXT_OVERFLOW_MARKERS = (
     "context size exceeded",
     "try increasing the context size",
     "prompt is too long",  # формулировка других OpenAI-совместимых серверов
+    # Внешние провайдеры говорят об этом по-своему: у отмеченных сотрудников
+    # (вкладка «Подключение») без этих строк вместо плашки была бы стена
+    # английского JSON.
+    "context_length_exceeded",
+    "maximum context length",
+    "context window",
+    "reduce the length of the messages",
 )
 
 CONTEXT_OVERFLOW_MESSAGE = (
@@ -333,6 +340,11 @@ async def stream_chat(
     tool_calls: dict[int, dict] = {}
     stats: dict = {}
     finish_reason = ""
+    # Был ли ответ вообще потоком. Сторонний шлюз может проигнорировать
+    # "stream": true и ответить обычным JSON — тогда строк «data:» не будет
+    # ни одной, и ход завершался молча: вопрос отправлен, ответа нет,
+    # объяснения нет.
+    saw_data = False
     try:
         async with make_client(conn) as client:
             async with client.stream("POST", "/chat/completions", json=payload) as response:
@@ -342,6 +354,7 @@ async def stream_chat(
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
+                    saw_data = True
                     data = line[5:].strip()
                     if data == "[DONE]":
                         break
@@ -378,6 +391,9 @@ async def stream_chat(
                         _merge_tool_call_delta(tool_calls, delta["tool_calls"])
     except httpx.HTTPError as exc:
         raise LLMError(_network_error_text(exc)) from exc
+    if not saw_data:
+        raise LLMError("Сервер модели ответил в неизвестном формате: ожидался "
+                       "поток ответа, пришло что-то другое. Сообщите администратору.")
     if finish_reason:
         yield "finish", finish_reason
     if tool_calls:

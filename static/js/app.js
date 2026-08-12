@@ -343,6 +343,11 @@ function initLlmPanel() {
   });
 
   el.userSearch.addEventListener("input", () => filterLlmUsers(el.userSearch.value));
+  // Поиск живёт внутри формы, и Enter в нём отправлял её: набранное в поиске
+  // имя сохраняло подключение вместе со случайно тронутыми галочками.
+  el.userSearch.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") e.preventDefault();
+  });
   document.getElementById("llm-users-none").addEventListener("click", () => {
     for (const box of el.userList.querySelectorAll("input:checked")) box.checked = false;
   });
