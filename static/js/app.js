@@ -85,6 +85,26 @@ function currentSectionFromHash() {
   return location.hash.replace(/^#/, "") || "chat";
 }
 
+// Ссылка «К рабочей области» из сайдбара. Адресную строку не трогаем: hash
+// здесь занят навигацией по разделам (#chat, #notes…), и переход по якорю
+// увёл бы пользователя в другой раздел. Фокус ставим сами — на первый
+// работающий элемент открытого раздела, чтобы следующий Tab шёл уже по нему.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), '
+  + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function initSkipLink() {
+  const link = document.getElementById("skip-to-content");
+  if (!link) return;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    const main = document.getElementById("main-content");
+    const section = main.querySelector("section:not([hidden])") || main;
+    const first = [...section.querySelectorAll(FOCUSABLE)]
+      .find((el) => el.offsetParent !== null && !el.closest("[hidden]"));
+    (first || main).focus();
+  });
+}
+
 // --- Администрирование ---
 
 function userRow(u) {
@@ -936,6 +956,7 @@ async function init() {
   setCalcAvailable(Boolean(currentUser.calc_enabled));
   initNotes(toast, currentUser);
   initCalendar(toast, currentUser);
+  initSkipLink();
   window.addEventListener("hashchange", () => showSection(currentSectionFromHash()));
   showSection(currentSectionFromHash());
 }

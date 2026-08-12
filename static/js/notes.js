@@ -158,8 +158,19 @@ function noteTile(note) {
   // Порядок задаётся перетаскиванием и у закреплённых, и у обычных, но
   // независимо: закреплённые всегда наверху, перемешать группы нельзя.
   tile.draggable = true;
+  // Плитка открывается щелчком, а значит должна открываться и с клавиатуры:
+  // article сам по себе не фокусируется, и заметки были недоступны без мыши.
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
+  tile.setAttribute("aria-label", `Открыть заметку «${note.title}»`);
   tile.addEventListener("click", (e) => {
     if (e.target.closest(".note-pin")) return;
+    selectNote(note.id);
+  });
+  tile.addEventListener("keydown", (e) => {
+    if (e.target !== tile) return;           // булавка отвечает за себя сама
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();                      // пробел иначе прокручивает список
     selectNote(note.id);
   });
 

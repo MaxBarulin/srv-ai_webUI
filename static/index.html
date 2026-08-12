@@ -22,6 +22,10 @@
         <li><a href="#calendar" data-section="calendar">Календарь</a></li>
         <li hidden id="nav-admin"><a href="#admin" data-section="admin">Администрирование</a></li>
       </ul>
+      <!-- Из меню до рабочей области было десять нажатий Tab: между ними весь
+           список чатов. Ссылка видна только с клавиатуры и перебрасывает сразу
+           в раздел. -->
+      <a class="skip-link" href="#main-content" id="skip-to-content">К рабочей области</a>
 
       <div class="sidebar-panel" id="sidebar-chat" hidden>
         <div class="chat-new-row">
@@ -58,11 +62,12 @@
         <h2 id="page-title">Чат</h2>
       </header>
 
-      <main class="content">
+      <main class="content" id="main-content" tabindex="-1">
         <section id="section-chat" hidden>
           <div class="chat-layout">
             <div class="chat-main">
               <button type="button" class="chat-gear" id="chat-options-btn"
+                      aria-expanded="false" aria-controls="chat-options"
                       title="Параметры чата">⚙</button>
               <aside class="chat-options" id="chat-options" hidden>
                 <div class="chat-options-head">

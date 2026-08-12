@@ -279,3 +279,45 @@ def test_theme_setting_persisted_per_user(client, ergo_user):
 
 
 # --- Очередь ---
+
+
+# --- Работа с клавиатуры ---
+
+def test_skip_link_leads_to_working_area(client):
+    """Из меню до раздела было десять нажатий Tab: между ними весь список
+    чатов. Ссылка-перескок должна быть в разметке и указывать на <main>."""
+    page = client.get("/").text
+    assert 'id="skip-to-content"' in page
+    assert 'href="#main-content"' in page
+    assert 'id="main-content"' in page
+    # tabindex="-1" — чтобы фокус можно было поставить программно, но сам
+    # контейнер не занимал места в обходе Tab
+    main = page.split('<main', 1)[1].split(">", 1)[0]
+    assert 'tabindex="-1"' in main
+
+
+def test_skip_link_placed_after_menu(client):
+    """Ссылка стоит ПОСЛЕ пунктов меню: пользователь жмёт Tab, стоя на
+    «Чат»/«Заметки»/«Календарь», а не ищет её в начале страницы."""
+    page = client.get("/").text
+    assert page.index('href="#calendar"') < page.index('id="skip-to-content"')
+    assert page.index('id="skip-to-content"') < page.index('id="chat-new-btn"')
+
+
+def test_row_actions_stay_in_tab_order(client):
+    """Кнопки строки чата прячутся до наведения. Через visibility: hidden они
+    выпадали из обхода Tab — с клавиатуры чат было не переименовать."""
+    css = client.get("/static/css/app.css").text
+    block = css.split(".chat-item .chat-action {", 1)[1].split("}", 1)[0]
+    assert "visibility" not in block
+    assert "opacity: 0" in block
+    assert "pointer-events: none" in block   # невидимая кнопка не ловит мышь
+    assert ".chat-item:focus-within .chat-action" in css
+
+
+def test_grid_column_can_shrink(client):
+    """1fr не ужимается ниже min-content: поле ввода упиралось в свой минимум
+    и выдавливало кнопку «Отправить» за край окна."""
+    css = client.get("/static/css/app.css").text
+    assert "grid-template-columns: 240px minmax(0, 1fr)" in css
+    assert "grid-template-columns: 200px minmax(0, 1fr)" in css

@@ -76,15 +76,26 @@ export function initChat(toast, announce) {
   loadExamples();
 
   // Окно «Параметры чата» (поповер под шестерёнкой)
+  const closeOptions = (returnFocus) => {
+    if (els.options.hidden) return;
+    els.options.hidden = true;
+    els.optionsBtn.setAttribute("aria-expanded", "false");
+    if (returnFocus) els.optionsBtn.focus();
+  };
   els.optionsBtn.addEventListener("click", () => {
     els.options.hidden = !els.options.hidden;
+    els.optionsBtn.setAttribute("aria-expanded", String(!els.options.hidden));
   });
-  $("chat-options-close").addEventListener("click", () => { els.options.hidden = true; });
+  $("chat-options-close").addEventListener("click", () => closeOptions(true));
   // клик вне окна закрывает его
   document.addEventListener("click", (e) => {
-    if (els.options.hidden) return;
     if (e.target.closest("#chat-options") || e.target.closest("#chat-options-btn")) return;
-    els.options.hidden = true;
+    closeOptions(false);
+  });
+  // Шторка перекрывает переписку, а мышью до неё ещё надо дотянуться: с
+  // клавиатуры её закрывает Escape, и фокус возвращается на шестерёнку.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeOptions(true);
   });
 
   initInputResize();
