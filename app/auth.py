@@ -89,7 +89,7 @@ async def delete_session(db: aiosqlite.Connection, token: str) -> None:
 async def _load_session_user(db: aiosqlite.Connection, token: str) -> aiosqlite.Row | None:
     cursor = await db.execute(
         """SELECT s.token, s.expires_at, u.id, u.login, u.display_name, u.role,
-                  u.is_active, u.group_id, g.name AS group_name
+                  u.is_active, u.group_id, u.llm_custom, g.name AS group_name
            FROM sessions s
            JOIN users u ON u.id = s.user_id
            LEFT JOIN groups g ON g.id = u.group_id
@@ -130,6 +130,9 @@ async def get_current_user(request: Request, db: aiosqlite.Connection = Depends(
         # None — пользователь без группы, видит все общие записи.
         "group_id": row["group_id"],
         "group_name": row["group_name"],
+        # Отмечен ли администратором для работы через дополнительное
+        # подключение к модели (вкладка «Подключение», см. app/llm.py).
+        "llm_custom": bool(row["llm_custom"]),
     }
 
 

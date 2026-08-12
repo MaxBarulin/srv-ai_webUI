@@ -193,10 +193,11 @@ async function loadUsers() {
 
 // --- Администрирование: подключение к модели ---
 //
-// .env задаёт исходное подключение, здесь его можно сменить на другой сервер
-// или внешнего провайдера без перезапуска сервиса. Ключ доступа сервер наружу
-// не отдаёт: приходит только признак «задан», и пустое поле означает «оставить
-// как есть», а не «очистить».
+// .env задаёт подключение, на котором работают все. Здесь настраивается второе
+// — на другой сервер или внешнего провайдера — и включается ПОИМЁННО: только
+// отмеченным сотрудникам, у остальных ничего не меняется. Ключ доступа сервер
+// наружу не отдаёт: приходит только признак «задан», и пустое поле означает
+// «оставить как есть», а не «очистить».
 
 function llmEls() {
   return {
@@ -210,11 +211,31 @@ function llmEls() {
     badge: document.getElementById("llm-state-badge"),
     text: document.getElementById("llm-state-text"),
     check: document.getElementById("llm-check"),
+    userList: document.getElementById("llm-user-list"),
+    userSearch: document.getElementById("llm-user-search"),
   };
 }
 
 // Нажали «Убрать ключ» — но применится это при сохранении, вместе с остальным
 let llmKeyCleared = false;
+
+function llmUserRow(u) {
+  const label = document.createElement("label");
+  label.className = "llm-user";
+  label.dataset.search = `${u.display_name} ${u.login}`.toLowerCase();
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.value = String(u.id);
+  box.checked = u.enabled;
+  const name = document.createElement("span");
+  name.className = "llm-user-name";
+  name.textContent = u.display_name || u.login;
+  const login = document.createElement("span");
+  login.className = "llm-user-login";
+  login.textContent = u.login;
+  label.append(box, name, login);
+  return label;
+}
 
 function renderLlmState(s) {
   const el = llmEls();
@@ -228,13 +249,53 @@ function renderLlmState(s) {
   el.keyHint.textContent = s.has_key
     ? "Ключ задан. Пустое поле — оставить прежний."
     : "Ключ не задан — для локальной модели он и не нужен.";
-  el.badge.textContent = s.custom ? "внешнее" : "из .env";
-  el.badge.className = s.custom ? "badge shared" : "badge";
-  el.text.textContent = s.custom
-    ? `Работаем через ${s.base_url} · ${s.model}. Всё, что сотрудники пишут в чат `
-      + `и прикрепляют, уходит на этот сервер. Возврат — кнопкой «Сбросить к .env» `
-      + `(${s.env.base_url} · ${s.env.model}).`
-    : `Подключение из .env: ${s.base_url} · ${s.model}.`;
+
+  el.userList.replaceChildren(...(s.users || []).map(llmUserRow));
+  el.userSearch.value = "";
+  filterLlmUsers("");
+
+  const n = s.enabled_count || 0;
+  // Три состояния: подключение не настроено; настроено, но никому не включено;
+  // работает у стольких-то человек.
+  if (!s.custom) {
+    el.badge.textContent = "не настроено";
+    el.badge.className = "badge";
+    el.text.textContent = `Все работают через подключение из .env: `
+      + `${s.env.base_url} · ${s.env.model}.`;
+  } else if (n === 0) {
+    el.badge.textContent = "выключено";
+    el.badge.className = "badge";
+    el.text.textContent = `Подключение ${s.base_url} · ${s.model} настроено, но не `
+      + `включено никому: все работают через .env (${s.env.base_url} · ${s.env.model}). `
+      + `Отметьте сотрудников ниже и сохраните.`;
+  } else {
+    el.badge.textContent = `включено: ${n}`;
+    el.badge.className = "badge shared";
+    el.text.textContent = `Через ${s.base_url} · ${s.model} `
+      + `${plural(n, "работает", "работают", "работают")} ${n} `
+      + `${plural(n, "сотрудник", "сотрудника", "сотрудников")}: всё, что `
+      + `${plural(n, "он пишет и прикрепляет", "они пишут и прикрепляют",
+                   "они пишут и прикрепляют")} в чат, `
+      + `уходит на этот сервер. Остальные — на .env `
+      + `(${s.env.base_url} · ${s.env.model}).`;
+  }
+}
+
+function plural(n, one, few, many) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+function filterLlmUsers(query) {
+  const q = query.trim().toLowerCase();
+  for (const row of llmEls().userList.querySelectorAll(".llm-user")) {
+    // Отмеченного не прячем даже при поиске: иначе легко не заметить, кого
+    // включил раньше, и снять галочку, сам того не желая.
+    const checked = row.querySelector("input").checked;
+    row.hidden = Boolean(q) && !checked && !row.dataset.search.includes(q);
+  }
 }
 
 async function loadLlmConnection() {
@@ -245,14 +306,21 @@ async function loadLlmConnection() {
 
 // Пустое поле ключа = не менять, поэтому «не трогаем» отправляем как null;
 // явное удаление — пустой строкой.
-function llmFormBody(el) {
+function llmFormBody(el, withUsers = true) {
   const typed = el.key.value;
-  return {
+  const body = {
     base_url: el.baseUrl.value.trim(),
     model: el.model.value.trim(),
     context_size: Number(el.context.value) || 0,
     api_key: llmKeyCleared ? "" : (typed === "" ? null : typed.trim()),
   };
+  // Список приходит полным составом: снятая галочка должна сниматься, поэтому
+  // отправляем всех отмеченных, а не разницу.
+  if (withUsers) {
+    body.user_ids = [...el.userList.querySelectorAll("input:checked")]
+      .map((box) => Number(box.value));
+  }
+  return body;
 }
 
 function initLlmPanel() {
@@ -268,8 +336,16 @@ function initLlmPanel() {
   });
 
   // Результат проверки относится к тем значениям, что были в полях: стоит их
-  // тронуть — и он уже неправда, поэтому убираем.
-  el.form.addEventListener("input", () => { el.check.hidden = true; });
+  // тронуть — и он уже неправда, поэтому убираем. Галочки сотрудников на
+  // проверку связи не влияют — из-за них плашку не гасим.
+  el.form.addEventListener("input", (e) => {
+    if (e.target.type !== "checkbox" && e.target !== el.userSearch) el.check.hidden = true;
+  });
+
+  el.userSearch.addEventListener("input", () => filterLlmUsers(el.userSearch.value));
+  document.getElementById("llm-users-none").addEventListener("click", () => {
+    for (const box of el.userList.querySelectorAll("input:checked")) box.checked = false;
+  });
 
   el.form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -287,7 +363,8 @@ function initLlmPanel() {
     el.check.className = "llm-check";
     el.check.textContent = "Проверяем…";
     try {
-      const r = await api("/api/admin/llm/test", { method: "POST", body: llmFormBody(el) });
+      const r = await api("/api/admin/llm/test",
+                          { method: "POST", body: llmFormBody(el, false) });
       el.check.className = r.ok ? "llm-check ok" : "llm-check bad";
       if (!r.ok) {
         el.check.textContent = r.error;

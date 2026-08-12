@@ -673,6 +673,10 @@ async def send_message(
                     ("tool", {"label": f"{name}: {exc}", "error": True},
                      {"label": f"{name}: {exc}", "status": "error"}))
 
+    # Подключение к модели у этого сотрудника: у отмеченных администратором —
+    # дополнительное, у всех остальных — из .env (см. app/llm.py).
+    conn = llm_connection(user)
+
     async def event_stream():
         # Полное время ответа: от начала обработки запроса (включая ожидание
         # очереди к модели) до завершения генерации — «сколько ждал пользователь».
@@ -751,7 +755,7 @@ async def send_message(
 
             for meta_index, filename, images in to_transcribe if transcribe_enabled() else []:
                 yield _sse("attachment", {"filename": filename, "status": "run"})
-                text, warning = await transcribe_images(filename, images)
+                text, warning = await transcribe_images(filename, images, conn)
                 if warning or not text:
                     yield _sse("attachment", {"filename": filename, "status": "error",
                                               "detail": warning or "расшифровка не получена"})
@@ -786,7 +790,7 @@ async def send_message(
                 tool_calls = None
                 async for kind, text in stream_chat(
                         msgs, tools=tools, enable_thinking=payload.enable_thinking,
-                        preserve_thinking=settings.preserve_thinking):
+                        preserve_thinking=settings.preserve_thinking, conn=conn):
                     if kind == "reasoning":
                         reasoning_parts.append(text)
                         step_reasoning.append(text)
@@ -929,8 +933,8 @@ async def send_message(
                 # Знаменатель процента — заданный администратором LLM_CONTEXT_SIZE
                 # (.env): показываем заполнение относительно ВЫБРАННОГО лимита.
                 # /props сервера — только запасной вариант, если .env не задан.
-                context_size = (llm_connection()["context_size"]
-                                or await get_server_context_size())
+                context_size = (conn["context_size"]
+                                or await get_server_context_size(conn))
                 # Объём самой переписки: сколько ушло в модель на первом круге
                 # (промпт + инструменты + история + вопрос) плюс сам ответ,
                 # который в историю и попадёт. Промежуточные круги сюда не
@@ -1037,6 +1041,8 @@ async def continue_generation(
         {"role": "user", "content": instruction},
     ]
 
+    conn = llm_connection(user)
+
     async def event_stream():
         wall_start = time.monotonic()
         content_parts: list[str] = []
@@ -1051,7 +1057,8 @@ async def continue_generation(
             gen_start = time.monotonic()
 
             async for kind, text in stream_chat(
-                    llm_messages, preserve_thinking=settings.preserve_thinking):
+                    llm_messages, preserve_thinking=settings.preserve_thinking,
+                    conn=conn):
                 if kind == "reasoning":
                     yield _sse("reasoning", {"text": text})
                 elif kind == "content":
@@ -1088,8 +1095,8 @@ async def continue_generation(
                 # и есть completion этой итерации, так что формула
                 # prompt + completion (KV после генерации) корректна.
                 context_used = last_prompt_tokens + total_completion
-                context_size = (llm_connection()["context_size"]
-                                or await get_server_context_size())
+                context_size = (conn["context_size"]
+                                or await get_server_context_size(conn))
                 stats_payload = {
                     "completion_tokens": total_completion,
                     "tokens_per_second": round(total_completion / total_gen_seconds, 1)

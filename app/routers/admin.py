@@ -334,6 +334,9 @@ class LLMConnRequest(BaseModel):
     context_size: int = 0
     # None — ключ не трогаем, "" — очистить, строка — задать новый
     api_key: str | None = None
+    # Кто работает через это подключение. None — список не трогаем (например,
+    # правим только адрес); список — он становится полным составом.
+    user_ids: list[int] | None = None
 
 
 def _validate_conn(payload: LLMConnRequest) -> tuple[str, str]:
@@ -356,19 +359,26 @@ def _validate_conn(payload: LLMConnRequest) -> tuple[str, str]:
     return base_url, model
 
 
-def _conn_view() -> dict:
-    """Состояние подключения для интерфейса — без ключа."""
+async def _conn_view(db: aiosqlite.Connection) -> dict:
+    """Состояние подключения для интерфейса — без ключа, но со списком людей."""
     from app.config import settings
-    from app.llm import connection
+    from app.llm import custom_connection
 
-    conn = connection()
+    conn = custom_connection()
+    cursor = await db.execute(
+        "SELECT id, login, display_name, llm_custom FROM users "
+        "WHERE is_active = 1 ORDER BY display_name COLLATE NOCASE, login")
+    users = [{"id": r["id"], "login": r["login"], "display_name": r["display_name"],
+              "enabled": bool(r["llm_custom"])} for r in await cursor.fetchall()]
     return {
         "base_url": conn["base_url"],
         "model": conn["model"],
         "context_size": conn["context_size"],
         "has_key": bool(conn["api_key"]),
         "custom": conn["custom"],
-        # Чтобы администратор видел, к чему вернёт кнопка «Сбросить к .env»
+        "users": users,
+        "enabled_count": sum(1 for u in users if u["enabled"]),
+        # Чтобы администратор видел, на чём остаются все остальные
         "env": {
             "base_url": settings.llm_base_url,
             "model": settings.llm_model,
@@ -378,9 +388,19 @@ def _conn_view() -> dict:
     }
 
 
+async def _set_conn_users(db: aiosqlite.Connection, user_ids: list[int]) -> None:
+    """Полный состав тех, кто работает через дополнительное подключение."""
+    await db.execute("UPDATE users SET llm_custom = 0")
+    for user_id in user_ids:
+        await db.execute("UPDATE users SET llm_custom = 1 WHERE id = ?", (user_id,))
+
+
 @router.get("/llm")
-async def get_llm_connection(admin: dict = Depends(require_admin)) -> dict:
-    return _conn_view()
+async def get_llm_connection(
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    return await _conn_view(db)
 
 
 @router.put("/llm")
@@ -399,14 +419,20 @@ async def update_llm_connection(
         # Пустая строка в настройках значит «как в .env», поэтому явную
         # очистку ключа отмечаем отдельно.
         await set_setting(db, LLM_API_KEY_CLEARED, "" if payload.api_key.strip() else "1")
+    if payload.user_ids is not None:
+        await _set_conn_users(db, payload.user_ids)
     await db.commit()
     await load_llm_connection(db)
+    view = await _conn_view(db)
+    # В аудите — состав поимённо: это и есть ответ на вопрос «чьи данные ушли
+    # на этот сервер и с какого момента».
+    enabled = ", ".join(u["login"] for u in view["users"] if u["enabled"]) or "никто"
     await write_audit(db, user_id=admin["id"], action="llm_connection_changed",
                       object_type="setting", object_id="llm",
-                      details=f"base_url={base_url}, model={model}",
+                      details=f"base_url={base_url}, model={model}, включено: {enabled}",
                       ip=client_ip(request))
     await db.commit()
-    return _conn_view()
+    return view
 
 
 @router.post("/llm/reset")
@@ -417,13 +443,18 @@ async def reset_llm_connection(
 ) -> dict:
     for key in LLM_KEYS:
         await set_setting(db, key, "")
+    # Сброс снимает и отметки: иначе настройки вернулись бы к .env, а список
+    # людей остался бы — и при следующей правке адреса они молча уехали бы
+    # на новый сервер, о чём администратор уже не помнит.
+    await _set_conn_users(db, [])
     await db.commit()
     await load_llm_connection(db)
     await write_audit(db, user_id=admin["id"], action="llm_connection_reset",
                       object_type="setting", object_id="llm",
-                      details="возврат к .env", ip=client_ip(request))
+                      details="настройки очищены, отметки сняты со всех",
+                      ip=client_ip(request))
     await db.commit()
-    return _conn_view()
+    return await _conn_view(db)
 
 
 @router.post("/llm/test")
@@ -443,8 +474,8 @@ async def test_llm_connection(
 
     base_url, model = _validate_conn(payload)
     key = payload.api_key
-    if key is None:                      # ключ не меняли — берём действующий
-        key = llm_module.connection()["api_key"]
+    if key is None:                      # ключ не меняли — берём сохранённый
+        key = llm_module.custom_connection()["api_key"]
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         async with httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers,

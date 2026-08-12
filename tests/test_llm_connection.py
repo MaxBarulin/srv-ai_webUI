@@ -70,13 +70,13 @@ def test_saved_connection_applies_to_requests(client, conn_admin):
     client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
                                        "model": "gpt-x", "api_key": "k",
                                        "context_size": 32768})
-    conn = llm_module.connection()
+    conn = llm_module.custom_connection()
     assert conn["base_url"] == "https://api.example.com/v1"
     assert conn["model"] == "gpt-x"
     assert conn["context_size"] == 32768
     assert conn["custom"] is True
     # и клиент собирается уже с новым адресом и заголовком
-    request = llm_module.make_client().build_request("GET", "/models")
+    request = llm_module.make_client(conn).build_request("GET", "/models")
     assert str(request.url).startswith("https://api.example.com/v1")
     assert request.headers["Authorization"] == "Bearer k"
 
@@ -87,7 +87,7 @@ def test_empty_key_keeps_previous(client, conn_admin):
                                        "model": "gpt-x", "api_key": "sk-first"})
     client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
                                        "model": "gpt-y"})          # api_key не передан
-    assert llm_module.connection()["api_key"] == "sk-first"
+    assert llm_module.custom_connection()["api_key"] == "sk-first"
     assert client.get("/api/admin/llm").json()["has_key"] is True
 
 
@@ -96,7 +96,7 @@ def test_key_can_be_cleared_explicitly(client, conn_admin):
                                        "model": "gpt-x", "api_key": "sk-first"})
     client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
                                        "model": "gpt-x", "api_key": ""})
-    assert llm_module.connection()["api_key"] == ""
+    assert llm_module.custom_connection()["api_key"] == ""
     assert client.get("/api/admin/llm").json()["has_key"] is False
 
 
@@ -107,18 +107,16 @@ def test_reset_returns_to_env(client, conn_admin):
     assert r["base_url"] == settings.llm_base_url
     assert r["custom"] is False
     assert r["has_key"] == bool(settings.llm_api_key)
-    assert llm_module.connection()["api_key"] == settings.llm_api_key
+    assert llm_module.custom_connection()["api_key"] == settings.llm_api_key
 
 
 def test_context_cache_reset_on_switch(client, conn_admin, monkeypatch):
     """n_ctx относится к конкретному серверу: после переключения кэш обязан
     сброситься, иначе счётчик контекста считает проценты от чужой модели."""
-    llm_module._server_ctx_cache = 8192
-    llm_module._server_ctx_probed = True
+    llm_module._server_ctx_cache["http://127.0.0.1:8000"] = 8192
     client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
                                        "model": "gpt-x"})
-    assert llm_module._server_ctx_probed is False
-    assert llm_module._server_ctx_cache is None
+    assert llm_module._server_ctx_cache == {}
 
 
 @pytest.mark.parametrize("payload,detail", [
@@ -205,7 +203,7 @@ def test_check_does_not_save(client, conn_admin, monkeypatch):
     monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
     client.post("/api/admin/llm/test",
                 json={"base_url": "https://api.example.com/v1", "model": "gpt-x"})
-    assert llm_module.connection()["base_url"] == settings.llm_base_url
+    assert llm_module.custom_connection()["base_url"] == settings.llm_base_url
 
 
 # --- Что видит пользователь, когда сервер модели не отвечает ---
@@ -239,3 +237,132 @@ def test_dead_connection_reports_error_to_chat(client, conn_admin, monkeypatch):
         body = "".join(r.iter_text())
     assert "event: error" in body
     assert "Сервер модели не отвечает" in body
+
+
+# --- Поимённое включение: у кого какое подключение ---
+
+@pytest.fixture(autouse=True)
+def _restore_marks():
+    """Отметка «работает через дополнительное подключение» живёт в users —
+    снимаем её, чтобы не протекала в соседние тесты."""
+    import sqlite3
+
+    yield
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        conn.execute("UPDATE users SET llm_custom = 0")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _enable_for(client, logins: list[str]) -> dict:
+    """Сохранить подключение и включить его перечисленным сотрудникам."""
+    users = client.get("/api/admin/llm").json()["users"]
+    ids = [u["id"] for u in users if u["login"] in logins]
+    return client.put("/api/admin/llm",
+                      json={"base_url": "https://api.example.com/v1", "model": "gpt-x",
+                            "api_key": "sk-key", "context_size": 128000,
+                            "user_ids": ids}).json()
+
+
+def test_nobody_switched_by_default(client, conn_admin, make_user):
+    """Настроить подключение и никого не включить — все остаются на .env."""
+    make_user("conn-worker", PASS)
+    client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
+                                       "model": "gpt-x"})
+    view = client.get("/api/admin/llm").json()
+    assert view["enabled_count"] == 0
+    assert all(u["enabled"] is False for u in view["users"])
+    # и у сотрудника подключение по-прежнему из .env
+    assert llm_module.connection({"llm_custom": 0})["base_url"] == settings.llm_base_url
+
+
+def test_only_marked_users_switch(client, conn_admin, make_user):
+    make_user("conn-included", PASS)
+    make_user("conn-excluded", PASS)
+    view = _enable_for(client, ["conn-included"])
+    assert view["enabled_count"] == 1
+
+    included = llm_module.connection({"llm_custom": 1})
+    excluded = llm_module.connection({"llm_custom": 0})
+    assert included["base_url"] == "https://api.example.com/v1"
+    assert included["model"] == "gpt-x"
+    assert excluded["base_url"] == settings.llm_base_url
+    assert excluded["model"] == settings.llm_model
+    assert excluded["api_key"] == settings.llm_api_key   # ключ провайдера не достаётся
+
+
+def test_mark_reaches_the_request(client, make_user, monkeypatch):
+    """Сквозная проверка: отмеченный сотрудник уходит на другой адрес, а
+    неотмеченный — на прежний."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"ок"}}]}\n\n'
+                                        "data: [DONE]\n\n",
+                              headers={"content-type": "text/event-stream"})
+
+    make_user("conn-admin2", PASS, role="admin")
+    make_user("conn-plain", PASS)
+    login_as(client, "conn-admin2", PASS)
+    users = client.get("/api/admin/llm").json()["users"]
+    plain_id = [u["id"] for u in users if u["login"] == "conn-plain"][0]
+    client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v1",
+                                       "model": "gpt-x", "user_ids": [plain_id]})
+
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+    # админ не отмечен — идёт на .env
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    with client.stream("POST", f"/api/chats/{chat_id}/messages",
+                       json={"content": "привет", "use_tools": False}) as r:
+        "".join(r.iter_text())
+    assert seen and seen[-1].startswith(settings.llm_base_url)
+
+    # отмеченный сотрудник — на дополнительное подключение
+    client.cookies.clear()
+    login_as(client, "conn-plain", PASS)
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    with client.stream("POST", f"/api/chats/{chat_id}/messages",
+                       json={"content": "привет", "use_tools": False}) as r:
+        "".join(r.iter_text())
+    assert seen[-1].startswith("https://api.example.com/v1")
+
+
+def test_marks_are_replaced_not_added(client, conn_admin, make_user):
+    """Список приходит полным составом: снятая галочка должна сниматься."""
+    make_user("conn-a", PASS)
+    make_user("conn-b", PASS)
+    _enable_for(client, ["conn-a", "conn-b"])
+    assert client.get("/api/admin/llm").json()["enabled_count"] == 2
+    view = _enable_for(client, ["conn-b"])
+    enabled = [u["login"] for u in view["users"] if u["enabled"]]
+    assert enabled == ["conn-b"]
+
+
+def test_marks_kept_when_list_not_sent(client, conn_admin, make_user):
+    """Правка одного адреса не должна сбрасывать состав."""
+    make_user("conn-keep", PASS)
+    _enable_for(client, ["conn-keep"])
+    client.put("/api/admin/llm", json={"base_url": "https://api.example.com/v2",
+                                       "model": "gpt-x"})
+    assert client.get("/api/admin/llm").json()["enabled_count"] == 1
+
+
+def test_reset_clears_marks(client, conn_admin, make_user):
+    """Сброс возвращает всех: иначе настройки ушли бы к .env, а люди остались
+    бы отмеченными и при следующей правке молча уехали на новый сервер."""
+    make_user("conn-reset", PASS)
+    _enable_for(client, ["conn-reset"])
+    view = client.post("/api/admin/llm/reset").json()
+    assert view["enabled_count"] == 0
+
+
+def test_audit_lists_who_was_switched(client, conn_admin, make_user):
+    make_user("conn-audited", PASS)
+    _enable_for(client, ["conn-audited"])
+    entries = client.get("/api/admin/audit").json()["items"]
+    changed = [e for e in entries if e["action"] == "llm_connection_changed"][0]
+    assert "conn-audited" in changed["details"]
+    assert "sk-key" not in changed["details"]

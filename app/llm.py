@@ -112,24 +112,31 @@ def build_system_prompt(user_display_name: str, specialization_prompt: str = "")
     return f"{prompt}\n\n{UNTRUSTED_CONTENT_RULE}"
 
 
-# ===== Активное подключение к модели =====
+# ===== Подключение к модели =====
 #
-# Основа — .env, поверх неё ложатся настройки администратора из app_settings
-# (вкладка «Подключение»). Пустое значение в настройках означает «как в .env»,
-# поэтому чистая установка работает ровно так же, как раньше.
+# Подключений два. Основное берётся из .env и работает у всех. Дополнительное
+# настраивается администратором (вкладка «Подключение») и включается ПОИМЁННО:
+# им пользуются только отмеченные сотрудники, у остальных ничего не меняется.
+# Пустое значение в настройке означает «как в .env».
 _conn_override: dict[str, str] = {}
 
 CONN_KEYS = ("base_url", "model", "api_key", "context_size")
 
 
-def connection() -> dict:
-    """Действующие параметры подключения (.env + настройки администратора)."""
-    env = {
+def env_connection() -> dict:
+    """Подключение из .env — то, на котором работают все неотмеченные."""
+    return {
         "base_url": settings.llm_base_url,
         "model": settings.llm_model,
         "api_key": settings.llm_api_key,
         "context_size": settings.llm_context_size,
+        "custom": False,
     }
+
+
+def custom_connection() -> dict:
+    """Дополнительное подключение — то, что настроено на вкладке."""
+    env = env_connection()
     result = dict(env)
     for key in CONN_KEYS:
         value = _conn_override.get(key, "")
@@ -144,6 +151,17 @@ def connection() -> dict:
     return result
 
 
+def connection(user: dict | None = None) -> dict:
+    """Подключение, через которое работает ЭТОТ сотрудник.
+
+    Без пользователя (фоновые задачи, проверка из админки) — подключение из
+    .env: дополнительное включают поимённо, и по умолчанию оно ни у кого.
+    """
+    if user is not None and user.get("llm_custom"):
+        return custom_connection()
+    return env_connection()
+
+
 def set_connection(override: dict[str, str]) -> None:
     """Заменить настройки администратора целиком. Пустой словарь — вернуться к .env.
 
@@ -156,11 +174,11 @@ def set_connection(override: dict[str, str]) -> None:
     _reset_server_ctx_cache_for_tests()
 
 
-def make_client() -> httpx.AsyncClient:
+def make_client(conn: dict | None = None) -> httpx.AsyncClient:
     # API-ключ опционален: если задан — шлём Bearer-заголовок (llama.cpp с
     # --api-key, сторонние OpenAI-совместимые провайдеры).
     # Сервер без аутентификации такой заголовок просто игнорирует.
-    conn = connection()
+    conn = conn or env_connection()
     headers = {}
     if conn["api_key"]:
         headers["Authorization"] = f"Bearer {conn['api_key']}"
@@ -172,36 +190,37 @@ def make_client() -> httpx.AsyncClient:
     )
 
 
-# Кэш n_ctx самого сервера (см. get_server_context_size). Проинициализируется
-# при первом успешном ответе llama.cpp; None означает «неизвестно».
-_server_ctx_cache: int | None = None
-_server_ctx_probed: bool = False
+# Кэш n_ctx серверов (см. get_server_context_size). Ключ — адрес: серверов
+# теперь может быть два (основной и дополнительный), и n_ctx у них разный.
+# Значение None означает «спрашивали, ответа нет».
+_server_ctx_cache: dict[str, int | None] = {}
 
 
 def _root_url(base_url: str | None = None) -> str:
     """base_url без хвостового `/v1` — llama.cpp кладёт /props и /health в корень."""
-    base = (base_url if base_url is not None else connection()["base_url"]).rstrip("/")
+    base = (base_url if base_url is not None else env_connection()["base_url"]).rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
     return base
 
 
-async def get_server_context_size() -> int | None:
-    """Реальный n_ctx запущенного llama.cpp (из /props). Кэшируется.
+async def get_server_context_size(conn: dict | None = None) -> int | None:
+    """Реальный n_ctx запущенного llama.cpp (из /props). Кэшируется по адресу.
 
     llama.cpp свой web UI считает «контекст: X%» именно от этого значения.
     Если сервер не отдал /props или поле — возвращаем None; вызывающий
     может откатиться к LLM_CONTEXT_SIZE из .env.
     """
-    global _server_ctx_cache, _server_ctx_probed
-    if _server_ctx_probed:
-        return _server_ctx_cache
-    _server_ctx_probed = True
-    key = connection()["api_key"]
+    conn = conn or env_connection()
+    root = _root_url(conn["base_url"])
+    if root in _server_ctx_cache:
+        return _server_ctx_cache[root]
+    _server_ctx_cache[root] = None      # не спрашиваем повторно при неудаче
+    key = conn["api_key"]
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         async with httpx.AsyncClient(
-            base_url=_root_url(),
+            base_url=root,
             headers=headers,
             timeout=httpx.Timeout(5.0, connect=3.0),
             transport=_transport,
@@ -221,20 +240,18 @@ async def get_server_context_size() -> int | None:
                 node = None
                 break
         if isinstance(node, int) and node > 0:
-            _server_ctx_cache = node
+            _server_ctx_cache[root] = node
             return node
     return None
 
 
 def _reset_server_ctx_cache_for_tests() -> None:
-    """Сбросить кэш /props: очередной вызов снова опросит сервер.
+    """Сбросить кэш /props: очередной вызов снова опросит серверы.
 
-    Нужен и тестам, и смене подключения — n_ctx относится к конкретному
-    серверу и после переключения становится неверным.
+    Нужен и тестам, и смене настроек подключения — n_ctx относится к
+    конкретному серверу и после правки адреса становится неверным.
     """
-    global _server_ctx_cache, _server_ctx_probed
-    _server_ctx_cache = None
-    _server_ctx_probed = False
+    _server_ctx_cache.clear()
 
 
 # Поля, в которых провайдеры отдают размышления модели. Порядок важен:
@@ -279,8 +296,12 @@ def _merge_tool_call_delta(acc: dict[int, dict], deltas: list[dict]) -> None:
 async def stream_chat(
     messages: list[dict], tools: list[dict] | None = None,
     enable_thinking: bool = True, preserve_thinking: bool = False,
+    conn: dict | None = None,
 ) -> AsyncIterator[tuple[str, str]]:
     """Yield ("reasoning" | "content", delta_text) from a streaming completion.
+
+    conn — подключение этого сотрудника (см. connection). Не передали —
+    работаем через .env, как все неотмеченные.
 
     В конце дополнительно отдаются:
     - ("finish", причина) — почему сервер остановил генерацию: "stop" (модель
@@ -291,8 +312,9 @@ async def stream_chat(
       tokens_per_second (llama.cpp отдаёт timings с реальной скоростью —
       тот же способ подсчёта, что в её собственном web UI).
     """
+    conn = conn or env_connection()
     payload = {
-        "model": connection()["model"],
+        "model": conn["model"],
         "messages": messages,
         "stream": True,
         # usage в финальном чанке (OpenAI-совместимо; llama.cpp поддерживает)
@@ -312,7 +334,7 @@ async def stream_chat(
     stats: dict = {}
     finish_reason = ""
     try:
-        async with make_client() as client:
+        async with make_client(conn) as client:
             async with client.stream("POST", "/chat/completions", json=payload) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode("utf-8", "replace")[:500]

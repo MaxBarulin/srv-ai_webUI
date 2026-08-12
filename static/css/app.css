@@ -509,6 +509,41 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 .llm-key-row { display: flex; gap: 8px; align-items: center; }
 .llm-key-row input { flex: 1; min-width: 0; }
 .llm-key-row .btn { flex: none; }
+/* Состав тех, кому включено дополнительное подключение */
+.llm-users { border: 0; padding: 0; margin: 22px 0 0; min-width: 0; }
+.llm-users legend {
+  padding: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.llm-users .hint { margin: 6px 0 10px; }
+.llm-users-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.llm-users-head input { flex: 1; min-width: 0; }
+.llm-users-head .btn { flex: none; }
+.llm-user-list {
+  max-height: 260px;      /* сотрудников может быть много — список прокручивается */
+  overflow-y: auto;
+  border: 1px solid var(--osk-line);
+  border-radius: var(--radius);
+}
+.llm-user {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--osk-text);
+  cursor: pointer;
+}
+.llm-user[hidden] { display: none; }
+.llm-user:hover { background: var(--osk-bg); }
+.llm-user + .llm-user { border-top: 1px solid var(--osk-line); }
+.llm-user input { width: auto; flex: none; margin: 0; }
+.llm-user-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llm-user-login { flex: none; font-size: 12px; color: var(--osk-slate); }
 .llm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .llm-check { margin: 12px 0 0; font-size: 13px; color: var(--osk-slate); }
 .llm-check.ok { color: #2e7d32; }

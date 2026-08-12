@@ -184,6 +184,10 @@ _COLUMN_MIGRATIONS = [
     ("users", "font_scale", "INTEGER NOT NULL DEFAULT 1"),
     # Тема оформления пользователя: 'light' | 'dark' | 'system'
     ("users", "theme", "TEXT NOT NULL DEFAULT 'light'"),
+    # Дополнительное подключение к модели (вкладка «Подключение») — не всем
+    # сразу, а поимённо: отмеченные работают через него, остальные остаются
+    # на подключении из .env.
+    ("users", "llm_custom", "INTEGER NOT NULL DEFAULT 0"),
     # Пер-чатовые тумблеры «Заметки/Календарь» и «Размышления» (§15)
     ("chats", "use_tools", "INTEGER NOT NULL DEFAULT 1"),
     ("chats", "enable_thinking", "INTEGER NOT NULL DEFAULT 1"),

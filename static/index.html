@@ -557,6 +557,17 @@
               <p class="hint">0 — спросить у сервера через <code>/props</code>. Внешние
                 провайдеры этого не умеют: для них значение нужно задать, иначе
                 счётчик заполнения контекста в чате работать не будет.</p>
+              <fieldset class="llm-users">
+                <legend>Кто работает через это подключение</legend>
+                <p class="hint">Отмеченные сотрудники уходят на этот сервер. У всех
+                  остальных ничего не меняется — они остаются на подключении из .env.</p>
+                <div class="llm-users-head">
+                  <input type="search" id="llm-user-search" placeholder="Найти сотрудника…"
+                         aria-label="Найти сотрудника">
+                  <button type="button" class="btn btn-small" id="llm-users-none">Снять все</button>
+                </div>
+                <div class="llm-user-list" id="llm-user-list"></div>
+              </fieldset>
               <div class="llm-actions">
                 <button type="submit" class="btn btn-primary">Сохранить</button>
                 <button type="button" class="btn" id="llm-test-btn">Проверить</button>

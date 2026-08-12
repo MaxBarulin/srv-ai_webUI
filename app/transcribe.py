@@ -56,7 +56,8 @@ def enabled() -> bool:
     return settings.image_transcribe
 
 
-async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]:
+async def transcribe_images(filename: str, images: list[str],
+                            conn: dict | None = None) -> tuple[str, str]:
     """Расшифровать картинки одного вложения.
 
     Все картинки вложения уходят одним запросом: у PDF в режиме «картинками»
@@ -88,7 +89,7 @@ async def transcribe_images(filename: str, images: list[str]) -> tuple[str, str]
     try:
         # Без размышлений: пересказ картинки — не та задача, ради которой стоит
         # ждать ещё и обдумывание, а показывать его тут всё равно негде.
-        async for kind, delta in stream_chat(messages, enable_thinking=False):
+        async for kind, delta in stream_chat(messages, enable_thinking=False, conn=conn):
             if kind == "content":
                 parts.append(delta)
     except LLMError:

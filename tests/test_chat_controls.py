@@ -74,7 +74,7 @@ def test_stats_event_from_server_counters(client, ctrl_user, monkeypatch):
 
 def test_stats_falls_back_to_env_when_props_unavailable(client, ctrl_user, monkeypatch):
     """Если /props недоступен — берём LLM_CONTEXT_SIZE из .env."""
-    async def no_props():
+    async def no_props(conn=None):
         return None
     monkeypatch.setattr("app.routers.chat.get_server_context_size", no_props)
     monkeypatch.setattr("app.llm.settings",
@@ -109,7 +109,7 @@ def test_stats_context_no_double_count_on_tool_loop(client, ctrl_user):
 
 def test_stats_without_any_context_size(client, ctrl_user, monkeypatch):
     """Ни /props, ни .env — процент неизвестен, показываем только tokens."""
-    async def no_props():
+    async def no_props(conn=None):
         return None
     monkeypatch.setattr("app.routers.chat.get_server_context_size", no_props)
     monkeypatch.setattr("app.llm.settings",
