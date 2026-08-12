@@ -312,6 +312,10 @@
                     aria-controls="admin-panel-calc" aria-selected="false"
                     tabindex="-1">Расчёты</button>
             <button type="button" class="tab" role="tab"
+                    id="admin-tab-llm" data-tab="llm"
+                    aria-controls="admin-panel-llm" aria-selected="false"
+                    tabindex="-1">Подключение</button>
+            <button type="button" class="tab" role="tab"
                     id="admin-tab-analytics" data-tab="analytics"
                     aria-controls="admin-panel-analytics" aria-selected="false"
                     tabindex="-1">Аналитика</button>
@@ -525,6 +529,41 @@
                 </div>
               </form>
             </div>
+          </div>
+          </div>
+
+          <div class="admin-panel" id="admin-panel-llm" role="tabpanel"
+               aria-labelledby="admin-tab-llm" hidden>
+          <h3 class="section-title">Подключение к модели</h3>
+          <div class="llm-state" id="llm-state">
+            <span class="badge" id="llm-state-badge"></span>
+            <span id="llm-state-text"></span>
+          </div>
+          <div class="card card-narrow mt-18">
+            <form id="llm-form">
+              <label for="llm-base-url">Адрес сервера (OpenAI-совместимый)</label>
+              <input type="text" id="llm-base-url" placeholder="http://127.0.0.1:8000/v1">
+              <label for="llm-model">Модель</label>
+              <input type="text" id="llm-model" placeholder="qwen3.6-35b">
+              <label for="llm-key">Ключ доступа</label>
+              <div class="llm-key-row">
+                <input type="password" id="llm-key" autocomplete="off"
+                       placeholder="оставьте пустым — ключ не изменится">
+                <button type="button" class="btn btn-small" id="llm-key-clear" hidden>Убрать ключ</button>
+              </div>
+              <p class="hint" id="llm-key-hint"></p>
+              <label for="llm-context">Размер контекста, токенов</label>
+              <input type="number" id="llm-context" min="0" step="1024">
+              <p class="hint">0 — спросить у сервера через <code>/props</code>. Внешние
+                провайдеры этого не умеют: для них значение нужно задать, иначе
+                счётчик заполнения контекста в чате работать не будет.</p>
+              <div class="llm-actions">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+                <button type="button" class="btn" id="llm-test-btn">Проверить</button>
+                <button type="button" class="btn btn-danger" id="llm-reset-btn">Сбросить к .env</button>
+              </div>
+              <p class="llm-check" id="llm-check" hidden></p>
+            </form>
           </div>
           </div>
 

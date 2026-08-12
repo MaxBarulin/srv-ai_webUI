@@ -1332,6 +1332,7 @@ async function submitTurn(chatId, content, attachments) {
 
   let renamed = null;
   let failed = false;
+  let failMessage = "";
   try {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
@@ -1409,11 +1410,16 @@ async function submitTurn(chatId, content, attachments) {
       live.appendChild(note);
       els.announce("Генерация остановлена");
     } else {
+      // Плашку показываем ещё и всплывающим сообщением: живой узел ответа
+      // ниже затирается перечитыванием истории из БД, а ошибки в ней нет —
+      // и пользователь оставался вообще без объяснения, почему нет ответа.
+      failMessage = e.message || "Ошибка при обращении к модели";
       const note = document.createElement("div");
       note.className = "msg-note msg-error";
-      note.textContent = e.message || "Ошибка при обращении к модели";
+      note.textContent = failMessage;
       live.appendChild(note);
-      els.announce(e.message || "Ошибка при обращении к модели");
+      els.announce(failMessage);
+      els.toast(failMessage, true);
     }
     failed = true;
   } finally {
@@ -1432,6 +1438,16 @@ async function submitTurn(chatId, content, attachments) {
     if (chatId === activeChatId) {
       updateInputState();
       await loadMessages().catch(() => {});
+      // История хранит только сам вопрос: ответа не было. Возвращаем плашку
+      // с причиной под последним сообщением, иначе выходит, что вопрос
+      // отправлен и молча пропал.
+      if (failMessage) {
+        const note = document.createElement("div");
+        note.className = "msg msg-note msg-error";
+        note.textContent = failMessage;
+        els.messages.appendChild(note);
+        scrollToBottom();
+      }
       els.input.focus();
     }
   }

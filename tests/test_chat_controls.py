@@ -55,7 +55,7 @@ def test_stats_event_from_server_counters(client, ctrl_user, monkeypatch):
     """Знаменатель процента — заданный админом LLM_CONTEXT_SIZE (.env): показываем
     заполнение относительно ВЫБРАННОГО лимита (500), а /props (8192) — лишь запас.
     Также приходит elapsed_seconds — полное время ответа."""
-    monkeypatch.setattr("app.routers.chat.settings",
+    monkeypatch.setattr("app.llm.settings",
                         replace(settings, llm_context_size=500))
     chat_id = client.post("/api/chats", json={}).json()["id"]
     events = _send(client, chat_id, "привет")
@@ -77,7 +77,7 @@ def test_stats_falls_back_to_env_when_props_unavailable(client, ctrl_user, monke
     async def no_props():
         return None
     monkeypatch.setattr("app.routers.chat.get_server_context_size", no_props)
-    monkeypatch.setattr("app.routers.chat.settings",
+    monkeypatch.setattr("app.llm.settings",
                         replace(settings, llm_context_size=500))
     chat_id = client.post("/api/chats", json={}).json()["id"]
     events = _send(client, chat_id, "привет")
@@ -112,7 +112,7 @@ def test_stats_without_any_context_size(client, ctrl_user, monkeypatch):
     async def no_props():
         return None
     monkeypatch.setattr("app.routers.chat.get_server_context_size", no_props)
-    monkeypatch.setattr("app.routers.chat.settings",
+    monkeypatch.setattr("app.llm.settings",
                         replace(settings, llm_context_size=0))
     chat_id = client.post("/api/chats", json={}).json()["id"]
     events = _send(client, chat_id, "привет")
@@ -155,7 +155,7 @@ def test_chat_tokens_measure_the_conversation_not_the_peak(client, ctrl_user):
 
 def test_chat_tokens_percent_and_persistence(client, ctrl_user, monkeypatch):
     """Процент считается от выбранного лимита и переживает перечитывание."""
-    monkeypatch.setattr("app.routers.chat.settings",
+    monkeypatch.setattr("app.llm.settings",
                         replace(settings, llm_context_size=500))
     chat_id = client.post("/api/chats", json={}).json()["id"]
     _send(client, chat_id, "привет")

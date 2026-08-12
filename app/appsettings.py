@@ -16,6 +16,18 @@ CALC_ADMIN = "admin"    # только администраторам — реж
 CALC_ALL = "all"        # всем сотрудникам
 CALC_ACCESS_VALUES = (CALC_OFF, CALC_ADMIN, CALC_ALL)
 
+# Подключение к модели: администратор может увести всех на другой сервер или
+# внешнего провайдера, не перезапуская сервис. Пустое значение = «как в .env»,
+# поэтому на чистой установке всё работает как раньше.
+LLM_BASE_URL = "llm_base_url"
+LLM_MODEL = "llm_model"
+LLM_API_KEY = "llm_api_key"
+LLM_CONTEXT_SIZE = "llm_context_size"
+# Ключ нельзя очистить пустой строкой — она означает «брать из .env». Явную
+# очистку храним отдельным признаком.
+LLM_API_KEY_CLEARED = "llm_api_key_cleared"
+LLM_KEYS = (LLM_BASE_URL, LLM_MODEL, LLM_API_KEY, LLM_CONTEXT_SIZE, LLM_API_KEY_CLEARED)
+
 DEFAULTS: dict[str, str] = {
     # По умолчанию инструмент виден только администратору: сначала обкатка,
     # потом открытие на всех — переключателем, а не выкаткой новой версии.
@@ -34,6 +46,17 @@ async def set_setting(db: aiosqlite.Connection, key: str, value: str) -> None:
         "INSERT INTO app_settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value))
+
+
+async def load_llm_connection(db: aiosqlite.Connection) -> None:
+    """Поднять сохранённое администратором подключение при старте сервиса."""
+    from app.llm import set_connection
+    stored = {}
+    for key in LLM_KEYS:
+        value = await get_setting(db, key)
+        if value:
+            stored[key.removeprefix("llm_")] = value
+    set_connection(stored)
 
 
 def calc_allowed(access: str, user: dict) -> bool:

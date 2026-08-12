@@ -36,6 +36,12 @@ UPLOAD_PATH_PREFIX = "/api/attachments"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Подключение к модели администратор может сменить из интерфейса; поднимаем
+    # сохранённое до того, как примем первый запрос.
+    from app.appsettings import load_llm_connection
+    from app.db import get_connection
+    async with get_connection() as db:
+        await load_llm_connection(db)
     # Политика хранения (CHAT_RETENTION_DAYS): чистим при старте и раз в сутки
     from app.retention import retention_loop
     task = asyncio.create_task(retention_loop())

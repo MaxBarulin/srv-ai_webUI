@@ -20,6 +20,7 @@ from app.calc_methods import active_methods, build_catalogue
 from app.config import settings
 from app.db import get_connection, get_db
 from app.llm import LLMError, build_system_prompt, get_server_context_size, stream_chat
+from app.llm import connection as llm_connection
 from app.documents import DocumentError, rasterize_pages
 from app.metrics import metrics
 from app.pending_pdf import take as take_pending_pdf
@@ -928,7 +929,7 @@ async def send_message(
                 # Знаменатель процента — заданный администратором LLM_CONTEXT_SIZE
                 # (.env): показываем заполнение относительно ВЫБРАННОГО лимита.
                 # /props сервера — только запасной вариант, если .env не задан.
-                context_size = (settings.llm_context_size
+                context_size = (llm_connection()["context_size"]
                                 or await get_server_context_size())
                 # Объём самой переписки: сколько ушло в модель на первом круге
                 # (промпт + инструменты + история + вопрос) плюс сам ответ,
@@ -1087,7 +1088,7 @@ async def continue_generation(
                 # и есть completion этой итерации, так что формула
                 # prompt + completion (KV после генерации) корректна.
                 context_used = last_prompt_tokens + total_completion
-                context_size = (settings.llm_context_size
+                context_size = (llm_connection()["context_size"]
                                 or await get_server_context_size())
                 stats_payload = {
                     "completion_tokens": total_completion,

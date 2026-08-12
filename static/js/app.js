@@ -186,8 +186,136 @@ async function loadUsers() {
   loadSpecs();
   loadExamplesAdmin();
   loadCalcSettings();
+  loadLlmConnection();
   loadMetrics();
   loadAudit();
+}
+
+// --- Администрирование: подключение к модели ---
+//
+// .env задаёт исходное подключение, здесь его можно сменить на другой сервер
+// или внешнего провайдера без перезапуска сервиса. Ключ доступа сервер наружу
+// не отдаёт: приходит только признак «задан», и пустое поле означает «оставить
+// как есть», а не «очистить».
+
+function llmEls() {
+  return {
+    form: document.getElementById("llm-form"),
+    baseUrl: document.getElementById("llm-base-url"),
+    model: document.getElementById("llm-model"),
+    key: document.getElementById("llm-key"),
+    keyHint: document.getElementById("llm-key-hint"),
+    context: document.getElementById("llm-context"),
+    keyClear: document.getElementById("llm-key-clear"),
+    badge: document.getElementById("llm-state-badge"),
+    text: document.getElementById("llm-state-text"),
+    check: document.getElementById("llm-check"),
+  };
+}
+
+// Нажали «Убрать ключ» — но применится это при сохранении, вместе с остальным
+let llmKeyCleared = false;
+
+function renderLlmState(s) {
+  const el = llmEls();
+  llmKeyCleared = false;
+  el.baseUrl.value = s.base_url || "";
+  el.model.value = s.model || "";
+  el.context.value = s.context_size || 0;
+  el.key.value = "";
+  el.key.disabled = false;
+  el.keyClear.hidden = !s.has_key;
+  el.keyHint.textContent = s.has_key
+    ? "Ключ задан. Пустое поле — оставить прежний."
+    : "Ключ не задан — для локальной модели он и не нужен.";
+  el.badge.textContent = s.custom ? "внешнее" : "из .env";
+  el.badge.className = s.custom ? "badge shared" : "badge";
+  el.text.textContent = s.custom
+    ? `Работаем через ${s.base_url} · ${s.model}. Всё, что сотрудники пишут в чат `
+      + `и прикрепляют, уходит на этот сервер. Возврат — кнопкой «Сбросить к .env» `
+      + `(${s.env.base_url} · ${s.env.model}).`
+    : `Подключение из .env: ${s.base_url} · ${s.model}.`;
+}
+
+async function loadLlmConnection() {
+  try {
+    renderLlmState(await api("/api/admin/llm"));
+  } catch { /* вкладка останется пустой; настройки не тронуты */ }
+}
+
+// Пустое поле ключа = не менять, поэтому «не трогаем» отправляем как null;
+// явное удаление — пустой строкой.
+function llmFormBody(el) {
+  const typed = el.key.value;
+  return {
+    base_url: el.baseUrl.value.trim(),
+    model: el.model.value.trim(),
+    context_size: Number(el.context.value) || 0,
+    api_key: llmKeyCleared ? "" : (typed === "" ? null : typed.trim()),
+  };
+}
+
+function initLlmPanel() {
+  const el = llmEls();
+  if (!el.form) return;
+
+  el.keyClear.addEventListener("click", () => {
+    llmKeyCleared = true;
+    el.key.value = "";
+    el.key.disabled = true;
+    el.keyClear.hidden = true;
+    el.keyHint.textContent = "Ключ будет удалён при сохранении.";
+  });
+
+  // Результат проверки относится к тем значениям, что были в полях: стоит их
+  // тронуть — и он уже неправда, поэтому убираем.
+  el.form.addEventListener("input", () => { el.check.hidden = true; });
+
+  el.form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      renderLlmState(await api("/api/admin/llm", { method: "PUT", body: llmFormBody(el) }));
+      el.check.hidden = true;
+      toast("Подключение сохранено");
+    } catch (err) {
+      toast(err.detail || "Не удалось сохранить подключение", true);
+    }
+  });
+
+  document.getElementById("llm-test-btn").addEventListener("click", async () => {
+    el.check.hidden = false;
+    el.check.className = "llm-check";
+    el.check.textContent = "Проверяем…";
+    try {
+      const r = await api("/api/admin/llm/test", { method: "POST", body: llmFormBody(el) });
+      el.check.className = r.ok ? "llm-check ok" : "llm-check bad";
+      if (!r.ok) {
+        el.check.textContent = r.error;
+      } else if (!r.model_found) {
+        el.check.className = "llm-check bad";
+        el.check.textContent = `Сервер отвечает, но модели «${el.model.value.trim()}» `
+          + `у него нет. Доступны: ${r.models.join(", ")}`;
+      } else {
+        el.check.textContent = r.models.length
+          ? `Сервер отвечает, модель на месте. Всего моделей: ${r.models.length}.`
+          : "Сервер отвечает.";
+      }
+    } catch (err) {
+      el.check.className = "llm-check bad";
+      el.check.textContent = err.detail || "Проверка не удалась";
+    }
+  });
+
+  document.getElementById("llm-reset-btn").addEventListener("click", async () => {
+    if (!confirm("Вернуть подключение из .env? Ключ доступа будет стёрт.")) return;
+    try {
+      renderLlmState(await api("/api/admin/llm/reset", { method: "POST" }));
+      el.check.hidden = true;
+      toast("Возвращено подключение из .env");
+    } catch (err) {
+      toast(err.detail || "Не удалось сбросить подключение", true);
+    }
+  });
 }
 
 // --- Администрирование: инструмент расчётов (§17) ---
@@ -926,6 +1054,7 @@ async function init() {
 
   // Администрирование: примеры и выгрузка
   initAdminTabs();
+  initLlmPanel();
   document.getElementById("create-user-form").addEventListener("submit", createUser);
   document.getElementById("group-add-btn").addEventListener("click", createGroup);
   document.getElementById("new-group-name").addEventListener("keydown", (e) => {

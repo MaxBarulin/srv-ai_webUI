@@ -98,6 +98,13 @@ async def props():
     return {"default_generation_settings": {"n_ctx": 8192}, "total_slots": 1}
 
 
+@app.get("/v1/models")
+async def models():
+    """Список моделей — им проверяется подключение во вкладке «Подключение».
+    Есть и у llama.cpp, и у OpenAI-совместимых провайдеров."""
+    return {"object": "list", "data": [{"id": "qwen3.6-35b", "object": "model"}]}
+
+
 def _flatten(content) -> str:
     """Текст сообщения, каким бы оно ни было — строкой или частями с картинками."""
     if isinstance(content, list):

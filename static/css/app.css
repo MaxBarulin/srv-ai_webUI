@@ -495,6 +495,26 @@ table.users td.actions { text-align: right; white-space: nowrap; }
 .group-add-cell { display: flex; align-items: flex-end; }
 table.users select.group-select { width: 100%; min-width: 140px; }
 
+/* --- Вкладка «Подключение» в администрировании --- */
+.llm-state {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: 720px;
+  font-size: 13px;
+  color: var(--osk-slate);
+  line-height: 1.5;
+}
+.llm-state .badge { flex: none; }
+.llm-key-row { display: flex; gap: 8px; align-items: center; }
+.llm-key-row input { flex: 1; min-width: 0; }
+.llm-key-row .btn { flex: none; }
+.llm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.llm-check { margin: 12px 0 0; font-size: 13px; color: var(--osk-slate); }
+.llm-check.ok { color: #2e7d32; }
+.llm-check.bad { color: var(--osk-red-dark); }
+:root[data-theme="dark"] .llm-check.ok { color: #81c784; }
+
 .card-narrow { max-width: 720px; }
 .mt-32 { margin-top: 32px; }
 .mt-18 { margin-top: 18px; }
@@ -1685,9 +1705,12 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   border: 0;
 }
 
+/* bottom с запасом: плашка об ошибке висит до закрытия и ловит щелчки, а внизу
+   справа стоят «Отправить» и «Файл» — накрыв их, она мешала повторить запрос
+   ровно тогда, когда это и нужно. */
 .toast {
   position: fixed;
-  right: 24px; bottom: 24px;
+  right: 24px; bottom: 108px;
   max-width: 380px;
   padding: 12px 18px;
   background: var(--osk-dark);
@@ -1729,6 +1752,10 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   .chat-input-row { padding: 0 14px 6px; }
   .sidebar .brand { padding: 14px; }
   .nav a { padding: 10px 12px; font-size: 12.5px; letter-spacing: 0.06em; }
+  /* Плитка шириной 260px переставала помещаться в остаток строки и вылезала
+     за правый край раздела — сужаем и её порог, и поля вокруг сетки. */
+  .notes-main { padding: 14px; }
+  .notes-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 }
 @media (max-width: 700px) {
   .chat-input-main { flex-wrap: wrap; }

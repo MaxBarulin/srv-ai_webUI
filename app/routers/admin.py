@@ -11,7 +11,14 @@ from pydantic import BaseModel
 from app.appsettings import (
     CALC_ACCESS,
     CALC_ACCESS_VALUES,
+    LLM_API_KEY,
+    LLM_API_KEY_CLEARED,
+    LLM_BASE_URL,
+    LLM_CONTEXT_SIZE,
+    LLM_KEYS,
+    LLM_MODEL,
     get_setting,
+    load_llm_connection,
     set_setting,
 )
 from app.audit import utcnow_iso, write_audit
@@ -308,6 +315,155 @@ async def set_user_group(
                               f"{updated['group_name'] or 'без группы'}",
                       ip=client_ip(request))
     return dict(updated)
+
+
+# ===== Подключение к модели =====
+#
+# .env задаёт исходное подключение, администратор может увести всех на другой
+# сервер или внешнего провайдера, не перезапуская сервис. Ключ хранится в БД
+# открытым текстом (шифровать его на изолированной машине, где ключ шифрования
+# лежит рядом, — самообман) и НИКОГДА не возвращается наружу: интерфейс видит
+# только «задан / не задан», аудит — только адрес и модель.
+
+_ALLOWED_SCHEMES = ("http://", "https://")
+
+
+class LLMConnRequest(BaseModel):
+    base_url: str
+    model: str
+    context_size: int = 0
+    # None — ключ не трогаем, "" — очистить, строка — задать новый
+    api_key: str | None = None
+
+
+def _validate_conn(payload: LLMConnRequest) -> tuple[str, str]:
+    base_url = payload.base_url.strip()
+    model = payload.model.strip()
+    if not base_url.startswith(_ALLOWED_SCHEMES):
+        raise HTTPException(status_code=400, detail="Адрес должен начинаться с http:// или https://")
+    if not model:
+        raise HTTPException(status_code=400, detail="Не указана модель")
+    if payload.context_size < 0:
+        raise HTTPException(status_code=400, detail="Размер контекста не может быть отрицательным")
+    # Ключ уходит в HTTP-заголовок, а тот обязан быть в ASCII: с кириллицей
+    # (например, скопированной вместе с подсказкой) запрос падал бы уже в
+    # httpx, и администратор видел бы 500 вместо внятного объяснения.
+    key = (payload.api_key or "").strip()
+    if key and not key.isascii():
+        raise HTTPException(status_code=400,
+                            detail="Ключ доступа должен быть без кириллицы и других "
+                                   "нелатинских символов")
+    return base_url, model
+
+
+def _conn_view() -> dict:
+    """Состояние подключения для интерфейса — без ключа."""
+    from app.config import settings
+    from app.llm import connection
+
+    conn = connection()
+    return {
+        "base_url": conn["base_url"],
+        "model": conn["model"],
+        "context_size": conn["context_size"],
+        "has_key": bool(conn["api_key"]),
+        "custom": conn["custom"],
+        # Чтобы администратор видел, к чему вернёт кнопка «Сбросить к .env»
+        "env": {
+            "base_url": settings.llm_base_url,
+            "model": settings.llm_model,
+            "context_size": settings.llm_context_size,
+            "has_key": bool(settings.llm_api_key),
+        },
+    }
+
+
+@router.get("/llm")
+async def get_llm_connection(admin: dict = Depends(require_admin)) -> dict:
+    return _conn_view()
+
+
+@router.put("/llm")
+async def update_llm_connection(
+    payload: LLMConnRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    base_url, model = _validate_conn(payload)
+    await set_setting(db, LLM_BASE_URL, base_url)
+    await set_setting(db, LLM_MODEL, model)
+    await set_setting(db, LLM_CONTEXT_SIZE, str(payload.context_size or ""))
+    if payload.api_key is not None:
+        await set_setting(db, LLM_API_KEY, payload.api_key.strip())
+        # Пустая строка в настройках значит «как в .env», поэтому явную
+        # очистку ключа отмечаем отдельно.
+        await set_setting(db, LLM_API_KEY_CLEARED, "" if payload.api_key.strip() else "1")
+    await db.commit()
+    await load_llm_connection(db)
+    await write_audit(db, user_id=admin["id"], action="llm_connection_changed",
+                      object_type="setting", object_id="llm",
+                      details=f"base_url={base_url}, model={model}",
+                      ip=client_ip(request))
+    await db.commit()
+    return _conn_view()
+
+
+@router.post("/llm/reset")
+async def reset_llm_connection(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    for key in LLM_KEYS:
+        await set_setting(db, key, "")
+    await db.commit()
+    await load_llm_connection(db)
+    await write_audit(db, user_id=admin["id"], action="llm_connection_reset",
+                      object_type="setting", object_id="llm",
+                      details="возврат к .env", ip=client_ip(request))
+    await db.commit()
+    return _conn_view()
+
+
+@router.post("/llm/test")
+async def test_llm_connection(
+    payload: LLMConnRequest,
+    admin: dict = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    """Проверить подключение ДО сохранения — теми значениями, что в форме.
+
+    Спрашиваем /v1/models: единственный метод, который есть и у llama.cpp, и у
+    OpenAI-совместимых провайдеров, и который ничего не стоит по токенам.
+    """
+    import httpx
+
+    from app import llm as llm_module
+
+    base_url, model = _validate_conn(payload)
+    key = payload.api_key
+    if key is None:                      # ключ не меняли — берём действующий
+        key = llm_module.connection()["api_key"]
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    try:
+        async with httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers,
+                                     timeout=httpx.Timeout(10.0, connect=5.0),
+                                     transport=llm_module._transport) as client:
+            r = await client.get("/models")
+    except httpx.HTTPError as exc:
+        return {"ok": False, "error": f"Соединение не установлено: {exc.__class__.__name__}"}
+    if r.status_code == 401 or r.status_code == 403:
+        return {"ok": False, "error": "Сервер отклонил ключ доступа"}
+    if r.status_code != 200:
+        return {"ok": False, "error": f"Сервер ответил {r.status_code}: "
+                                      f"{r.text[:200]}"}
+    try:
+        names = [m.get("id", "") for m in (r.json().get("data") or []) if m.get("id")]
+    except (ValueError, AttributeError):
+        names = []
+    return {"ok": True, "models": names[:50],
+            "model_found": (not names) or model in names}
 
 
 # ===== Расчёты (§17): кому доступен инструмент вычислений =====

@@ -30,6 +30,23 @@ class LLMError(Exception):
     """LLM backend is unreachable or returned an error."""
 
 
+def _network_error_text(exc: httpx.HTTPError) -> str:
+    """Сбой связи — словами, а не классом исключения httpx.
+
+    Эту строку читает не разработчик, а нормировщик в цехе: ему нужно понять,
+    что дело не в его вопросе, и к кому идти. Английское «All connection
+    attempts failed» этого не сообщало.
+    """
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return ("Сервер модели не отвечает: соединение не установлено. "
+                "Вопрос не потерян — повторите позже или сообщите администратору.")
+    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return ("Сервер модели не ответил вовремя. Попробуйте повторить вопрос — "
+                "если повторяется, сообщите администратору.")
+    return (f"Сбой связи с сервером модели ({exc.__class__.__name__}). "
+            "Сообщите администратору.")
+
+
 # Запрос длиннее контекста — самая частая осмысленная ошибка сервера, и своих
 # бюджетов на символы мы не держим: сколько текста поместится, знает только сам
 # llama.cpp, а он об этом честно сообщает. Ловим его формулировку и переводим,
@@ -95,15 +112,60 @@ def build_system_prompt(user_display_name: str, specialization_prompt: str = "")
     return f"{prompt}\n\n{UNTRUSTED_CONTENT_RULE}"
 
 
+# ===== Активное подключение к модели =====
+#
+# Основа — .env, поверх неё ложатся настройки администратора из app_settings
+# (вкладка «Подключение»). Пустое значение в настройках означает «как в .env»,
+# поэтому чистая установка работает ровно так же, как раньше.
+_conn_override: dict[str, str] = {}
+
+CONN_KEYS = ("base_url", "model", "api_key", "context_size")
+
+
+def connection() -> dict:
+    """Действующие параметры подключения (.env + настройки администратора)."""
+    env = {
+        "base_url": settings.llm_base_url,
+        "model": settings.llm_model,
+        "api_key": settings.llm_api_key,
+        "context_size": settings.llm_context_size,
+    }
+    result = dict(env)
+    for key in CONN_KEYS:
+        value = _conn_override.get(key, "")
+        if value == "":
+            continue
+        result[key] = int(value) if key == "context_size" else value
+    # Ключ — особый случай: очистить его настройкой нельзя пустой строкой
+    # (она значит «как в .env»), поэтому очистка приходит явным признаком.
+    if _conn_override.get("api_key_cleared") == "1":
+        result["api_key"] = ""
+    result["custom"] = any(result[k] != env[k] for k in CONN_KEYS)
+    return result
+
+
+def set_connection(override: dict[str, str]) -> None:
+    """Заменить настройки администратора целиком. Пустой словарь — вернуться к .env.
+
+    Кэш n_ctx привязан к конкретному серверу: при смене подключения его
+    обязательно сбрасываем, иначе счётчик контекста продолжит считать проценты
+    от размера прежней модели.
+    """
+    global _conn_override
+    _conn_override = {k: v for k, v in override.items() if v}
+    _reset_server_ctx_cache_for_tests()
+
+
 def make_client() -> httpx.AsyncClient:
-    # API-ключ (LLM_API_KEY) опционален: если задан — шлём Bearer-заголовок
-    # (llama.cpp с --api-key, сторонние OpenAI-совместимые провайдеры).
+    # API-ключ опционален: если задан — шлём Bearer-заголовок (llama.cpp с
+    # --api-key, сторонние OpenAI-совместимые провайдеры).
     # Сервер без аутентификации такой заголовок просто игнорирует.
+    conn = connection()
     headers = {}
-    if settings.llm_api_key:
-        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    if conn["api_key"]:
+        headers["Authorization"] = f"Bearer {conn['api_key']}"
     return httpx.AsyncClient(
-        base_url=settings.llm_base_url,
+        base_url=conn["base_url"],
         headers=headers,
         timeout=httpx.Timeout(settings.llm_timeout, connect=10),
         transport=_transport,
@@ -116,9 +178,9 @@ _server_ctx_cache: int | None = None
 _server_ctx_probed: bool = False
 
 
-def _root_url() -> str:
+def _root_url(base_url: str | None = None) -> str:
     """base_url без хвостового `/v1` — llama.cpp кладёт /props и /health в корень."""
-    base = settings.llm_base_url.rstrip("/")
+    base = (base_url if base_url is not None else connection()["base_url"]).rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
     return base
@@ -135,7 +197,8 @@ async def get_server_context_size() -> int | None:
     if _server_ctx_probed:
         return _server_ctx_cache
     _server_ctx_probed = True
-    headers = {"Authorization": f"Bearer {settings.llm_api_key}"} if settings.llm_api_key else {}
+    key = connection()["api_key"]
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         async with httpx.AsyncClient(
             base_url=_root_url(),
@@ -164,7 +227,11 @@ async def get_server_context_size() -> int | None:
 
 
 def _reset_server_ctx_cache_for_tests() -> None:
-    """Только для тестов: сбросить кэш, чтобы очередной вызов снова опросил /props."""
+    """Сбросить кэш /props: очередной вызов снова опросит сервер.
+
+    Нужен и тестам, и смене подключения — n_ctx относится к конкретному
+    серверу и после переключения становится неверным.
+    """
     global _server_ctx_cache, _server_ctx_probed
     _server_ctx_cache = None
     _server_ctx_probed = False
@@ -225,7 +292,7 @@ async def stream_chat(
       тот же способ подсчёта, что в её собственном web UI).
     """
     payload = {
-        "model": settings.llm_model,
+        "model": connection()["model"],
         "messages": messages,
         "stream": True,
         # usage в финальном чанке (OpenAI-совместимо; llama.cpp поддерживает)
@@ -288,7 +355,7 @@ async def stream_chat(
                     if delta.get("tool_calls"):
                         _merge_tool_call_delta(tool_calls, delta["tool_calls"])
     except httpx.HTTPError as exc:
-        raise LLMError(f"LLM недоступен: {exc}") from exc
+        raise LLMError(_network_error_text(exc)) from exc
     if finish_reason:
         yield "finish", finish_reason
     if tool_calls:
