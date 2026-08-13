@@ -397,10 +397,17 @@ async def _conn_view(db: aiosqlite.Connection) -> dict:
 
 
 async def _set_conn_users(db: aiosqlite.Connection, user_ids: list[int]) -> None:
-    """Полный состав тех, кто работает через дополнительное подключение."""
+    """Полный состав тех, кто работает через дополнительное подключение.
+
+    Отметить можно только действующего сотрудника. Блокировка отметку снимает
+    (см. set_user_active), но обратный путь был открыт: заблокированного нет в
+    списке на вкладке, а отметить его по номеру запрос всё же позволял — и
+    после разблокировки он молча оказался бы на внешнем сервере.
+    """
     await db.execute("UPDATE users SET llm_custom = 0")
     for user_id in user_ids:
-        await db.execute("UPDATE users SET llm_custom = 1 WHERE id = ?", (user_id,))
+        await db.execute(
+            "UPDATE users SET llm_custom = 1 WHERE id = ? AND is_active = 1", (user_id,))
 
 
 @router.get("/llm")

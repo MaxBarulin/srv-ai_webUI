@@ -366,3 +366,46 @@ def test_audit_lists_who_was_switched(client, conn_admin, make_user):
     changed = [e for e in entries if e["action"] == "llm_connection_changed"][0]
     assert "conn-audited" in changed["details"]
     assert "sk-key" not in changed["details"]
+
+
+def _llm_custom(user_id: int) -> int:
+    """Отметка прямо из БД: заблокированного нет в ответе вкладки."""
+    import sqlite3
+
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        return conn.execute(
+            "SELECT llm_custom FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_blocked_user_cannot_be_marked(client, conn_admin, make_user):
+    """Заблокированного на вкладке не видно, но номер его известен — и запрос
+    с этим номером отметку ставить не должен."""
+    blocked_id = make_user("conn-blocked", PASS, is_active=False)
+    active_id = make_user("conn-ok", PASS)
+
+    view = client.put("/api/admin/llm", json={
+        "base_url": "https://api.example.com/v1", "model": "gpt-x",
+        "user_ids": [blocked_id, active_id]}).json()
+
+    assert _llm_custom(blocked_id) == 0
+    assert _llm_custom(active_id) == 1
+    assert view["enabled_count"] == 1
+    assert "conn-blocked" not in [u["login"] for u in view["users"]]
+
+
+def test_unblocking_does_not_switch_to_external(client, conn_admin, make_user):
+    """Следствие: разблокировка возвращает сотрудника на .env, а не на чужой
+    сервер — иначе отметка, поставленная в обход списка, всплыла бы позже."""
+    user_id = make_user("conn-returned", PASS, is_active=False)
+    client.put("/api/admin/llm", json={
+        "base_url": "https://api.example.com/v1", "model": "gpt-x",
+        "user_ids": [user_id]})
+
+    client.post(f"/api/admin/users/{user_id}/active", json={"is_active": True})
+
+    assert _llm_custom(user_id) == 0
+    assert llm_module.connection({"llm_custom": _llm_custom(user_id)})["base_url"] \
+        == settings.llm_base_url
