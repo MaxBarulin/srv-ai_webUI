@@ -139,6 +139,16 @@ function userRow(u) {
       badge.className = u.is_active ? "badge" : "badge blocked";
       badge.textContent = u.is_active ? "активен" : "заблокирован";
       td.appendChild(badge);
+      // Отметку о внешнем подключении видно и здесь: иначе о ней помнит
+      // только тот, кто её ставил, а работает она молча.
+      if (u.llm_custom) {
+        const ext = document.createElement("span");
+        ext.className = "badge shared";
+        ext.textContent = "внешняя ЛЛМ";
+        ext.title = "Работает через дополнительное подключение "
+          + "(вкладка «Подключение»)";
+        td.appendChild(ext);
+      }
     } else {
       td.textContent = text;
     }

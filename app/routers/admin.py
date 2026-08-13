@@ -31,9 +31,12 @@ from app.metrics import metrics
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+# llm_custom — работает ли сотрудник через дополнительное подключение
+# (вкладка «Подключение»). В списке пользователей он нужен, чтобы отметку было
+# видно и оттуда: иначе о ней помнит только тот, кто её ставил.
 SELECT_USER = """
 SELECT u.id, u.login, u.display_name, u.role, u.is_active, u.created_at,
-       u.group_id, g.name AS group_name
+       u.group_id, u.llm_custom, g.name AS group_name
 FROM users u LEFT JOIN groups g ON g.id = u.group_id
 """
 
@@ -128,6 +131,11 @@ async def set_user_active(
     if not payload.is_active:
         # kill active sessions of the blocked user
         await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        # Заодно снимаем отметку о дополнительном подключении: в списке на
+        # вкладке «Подключение» заблокированного нет, и отметка осталась бы
+        # невидимой — а после разблокировки сотрудник молча вернулся бы на
+        # внешний сервер.
+        await db.execute("UPDATE users SET llm_custom = 0 WHERE id = ?", (user_id,))
     await db.commit()
     await write_audit(db, user_id=admin["id"],
                       action="user_unblocked" if payload.is_active else "user_blocked",

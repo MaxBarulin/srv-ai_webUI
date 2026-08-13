@@ -392,3 +392,110 @@ def test_other_400_is_not_mistaken_for_template_kwargs(client, edge_admin, monke
     body = _ask(client)
     assert "model not found" in body
     assert len(calls) == 1, "повтор не нужен"
+
+
+# --- Возврат на локальную модель: «снял, а он всё равно там» ---
+
+def _where(client) -> str:
+    """Куда фактически ушёл запрос этого сотрудника."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _sse('{"choices":[{"delta":{"content":"ок"}}]}')
+
+    saved, llm_module._transport = llm_module._transport, httpx.MockTransport(handler)
+    try:
+        _ask(client)
+    finally:
+        llm_module._transport = saved
+    return seen[-1]
+
+
+def test_unchecking_applies_to_the_next_request(client, make_user):
+    """Сняли отметку — следующий же вопрос идёт на локальную модель. Ничего
+    не кэшируется на сессию: подключение выбирается на каждом запросе."""
+    make_user("back-adm", PASS, role="admin")
+    make_user("back-user", PASS)
+    login_as(client, "back-adm", PASS)
+    _enable(client, "back-user")
+
+    client.cookies.clear()
+    login_as(client, "back-user", PASS)          # сессию НЕ пересоздаём дальше
+    assert _where(client).startswith(PROVIDER)
+
+    # админ снимает отметку, а сотрудник продолжает работать в СВОЕЙ сессии:
+    # запоминаем её куки и возвращаем после правки.
+    cookies = dict(client.cookies)
+    client.cookies.clear()
+    login_as(client, "back-adm", PASS)
+    client.put("/api/admin/llm", json={"base_url": PROVIDER, "model": "gpt-x",
+                                       "user_ids": []})
+    client.cookies.clear()
+    for k, v in cookies.items():                 # возвращаем ТУ ЖЕ сессию
+        client.cookies.set(k, v)
+    assert _where(client).startswith(settings.llm_base_url)
+
+
+def test_reset_returns_everyone_at_once(client, make_user):
+    """«Сбросить к .env» возвращает всех сразу, не по одному."""
+    make_user("back-adm2", PASS, role="admin")
+    make_user("back-a", PASS)
+    make_user("back-b", PASS)
+    login_as(client, "back-adm2", PASS)
+    users = client.get("/api/admin/llm").json()["users"]
+    ids = [u["id"] for u in users if u["login"] in ("back-a", "back-b")]
+    client.put("/api/admin/llm", json={"base_url": PROVIDER, "model": "gpt-x",
+                                       "user_ids": ids})
+    client.post("/api/admin/llm/reset")
+
+    for login in ("back-a", "back-b"):
+        client.cookies.clear()
+        login_as(client, login, PASS)
+        assert _where(client).startswith(settings.llm_base_url), login
+
+
+def test_blocking_clears_the_mark(client, make_user):
+    """Заблокированного в списке подключения нет — отметка снимается сразу,
+    иначе после разблокировки он молча вернулся бы на внешний сервер."""
+    make_user("back-adm3", PASS, role="admin")
+    blocked = make_user("back-blocked", PASS)
+    login_as(client, "back-adm3", PASS)
+    _enable(client, "back-blocked")
+    client.post(f"/api/admin/users/{blocked}/active", json={"is_active": False})
+    client.post(f"/api/admin/users/{blocked}/active", json={"is_active": True})
+
+    assert client.get("/api/admin/llm").json()["enabled_count"] == 0
+    client.cookies.clear()
+    login_as(client, "back-blocked", PASS)
+    assert _where(client).startswith(settings.llm_base_url)
+
+
+def test_forgotten_argument_falls_back_to_local(client):
+    """Свойство, на котором всё держится: подключение по умолчанию — из .env.
+    Забытый аргумент где угодно в коде уводит на локальную модель, а не на
+    внешний сервер. Ошибиться в опасную сторону нельзя."""
+    llm_module.set_connection({"base_url": PROVIDER, "model": "gpt-x",
+                               "api_key": "sk-secret"})
+    assert llm_module.connection()["base_url"] == settings.llm_base_url
+    assert llm_module.connection(None)["base_url"] == settings.llm_base_url
+    assert llm_module.connection({})["base_url"] == settings.llm_base_url
+    assert llm_module.connection({"login": "нет-поля"})["base_url"] == settings.llm_base_url
+    assert llm_module.connection({"llm_custom": 0})["base_url"] == settings.llm_base_url
+    assert llm_module.connection({"llm_custom": False})["base_url"] == settings.llm_base_url
+    # и ключ провайдера неотмеченному не достаётся
+    assert llm_module.connection({"llm_custom": 0})["api_key"] == settings.llm_api_key
+    # клиент без подключения — тоже локальный
+    request = llm_module.make_client().build_request("GET", "/models")
+    assert str(request.url).startswith(settings.llm_base_url)
+
+
+def test_default_install_is_local_without_key(client, make_user):
+    """Чистая установка: подключение не настроено, ключа нет, отмеченных нет."""
+    make_user("back-adm4", PASS, role="admin")
+    login_as(client, "back-adm4", PASS)
+    view = client.get("/api/admin/llm").json()
+    assert view["custom"] is False
+    assert view["enabled_count"] == 0
+    assert view["has_key"] is bool(settings.llm_api_key)
+    assert all(u["enabled"] is False for u in view["users"])

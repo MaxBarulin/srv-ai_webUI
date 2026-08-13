@@ -426,7 +426,12 @@ table.users td.actions { text-align: right; white-space: nowrap; }
   font-size: 12px;
   border: 1px solid var(--osk-line);
   color: var(--osk-slate);
+  /* Метка — короткая подпись; перенос внутри неё ломает саму форму плашки */
+  white-space: nowrap;
 }
+/* Вторая метка в ячейке (например, «внешняя ЛЛМ» рядом со статусом) встаёт
+   под первую, а не жмётся к ней в узкой колонке */
+td .badge + .badge { margin-top: 4px; }
 .badge.admin { border-color: var(--osk-red); color: var(--osk-red); }
 .badge.blocked { background: var(--osk-slate); border-color: var(--osk-slate); color: #fff; }
 /* Группа (отдел/бюро), которой адресована общая заметка или событие */
