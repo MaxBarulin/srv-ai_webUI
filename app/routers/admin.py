@@ -474,8 +474,13 @@ async def test_llm_connection(
 
     base_url, model = _validate_conn(payload)
     key = payload.api_key
-    if key is None:                      # ключ не меняли — берём сохранённый
-        key = llm_module.custom_connection()["api_key"]
+    if key is None:
+        # Ключ не меняли — берём сохранённый, но ТОЛЬКО если проверяем тот же
+        # адрес. Иначе «проверить» превращалось бы в способ вытащить ключ:
+        # подставить свой сервер и посмотреть, что придёт в заголовке. Ключ
+        # мы наружу не отдаём, и обходного пути для этого быть не должно.
+        saved = llm_module.custom_connection()
+        key = saved["api_key"] if base_url.rstrip("/") == saved["base_url"].rstrip("/") else ""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         async with httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers,
@@ -486,6 +491,12 @@ async def test_llm_connection(
         return {"ok": False, "error": f"Соединение не установлено: {exc.__class__.__name__}"}
     if r.status_code == 401 or r.status_code == 403:
         return {"ok": False, "error": "Сервер отклонил ключ доступа"}
+    if r.status_code == 404 and not base_url.rstrip("/").endswith("/v1"):
+        # Самая частая опечатка: скопировали адрес сервиса без /v1. Ошибка
+        # сервера при этом не отличается от «нет такого метода».
+        return {"ok": False, "error": "Сервер ответил 404. Проверьте адрес: у "
+                                      "OpenAI-совместимых сервисов он обычно "
+                                      "оканчивается на /v1"}
     if r.status_code != 200:
         return {"ok": False, "error": f"Сервер ответил {r.status_code}: "
                                       f"{r.text[:200]}"}

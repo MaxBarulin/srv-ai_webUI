@@ -269,3 +269,126 @@ def test_image_transcription_follows_the_user(client, make_user, monkeypatch):
 
     assert seen, "расшифровка не пошла в модель"
     assert all(url.startswith(PROVIDER) for url in seen), seen
+
+
+# --- Ключ не должен утекать через «Проверить» ---
+
+def test_check_does_not_lend_the_key_to_another_host(client, edge_admin, monkeypatch):
+    """Ключ мы наружу не отдаём — значит и «Проверить» не должно быть способом
+    его вытащить: подставил свой адрес, посмотрел заголовок."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization", ""))
+        return httpx.Response(200, json={"data": []})
+
+    client.put("/api/admin/llm", json={"base_url": PROVIDER, "model": "gpt-x",
+                                       "api_key": "sk-secret"})
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+
+    # свой адрес, ключ не передан — сохранённый подставлять нельзя
+    client.post("/api/admin/llm/test",
+                json={"base_url": "https://чужой.example/v1", "model": "m"})
+    assert seen[-1] == ""
+
+    # тот же адрес — ключ берём, иначе проверку сохранённого не сделать
+    client.post("/api/admin/llm/test", json={"base_url": PROVIDER, "model": "gpt-x"})
+    assert seen[-1] == "Bearer sk-secret"
+
+
+def test_check_hints_missing_v1(client, edge_admin, monkeypatch):
+    """Адрес без /v1 — самая частая опечатка, и 404 сам по себе о ней молчит."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="Not Found")
+
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+    r = client.post("/api/admin/llm/test",
+                    json={"base_url": "https://api.provider.example", "model": "m"}).json()
+    assert r["ok"] is False
+    assert "/v1" in r["error"]
+
+
+@pytest.mark.parametrize("base", [PROVIDER, PROVIDER + "/"])
+def test_trailing_slash_does_not_break_the_path(client, edge_admin, monkeypatch, base):
+    """Адрес копируют по-разному; лишняя косая черта не должна давать
+    //chat/completions."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _sse('{"choices":[{"delta":{"content":"ок"}}]}')
+
+    users = client.get("/api/admin/llm").json()["users"]
+    uid = [u["id"] for u in users if u["login"] == "edge-admin"][0]
+    client.put("/api/admin/llm", json={"base_url": base, "model": "gpt-x",
+                                       "user_ids": [uid]})
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+    _ask(client)
+    assert seen[-1] == PROVIDER + "/chat/completions", seen
+
+
+# --- Параметры шаблона чата, которых внешний провайдер не знает ---
+
+def test_template_kwargs_dropped_after_refusal(client, edge_admin, monkeypatch):
+    """PRESERVE_THINKING включён по умолчанию, и chat_template_kwargs уходит в
+    КАЖДОМ запросе. Провайдер вправе отвергнуть лишнее поле — тогда у
+    отмеченных сотрудников не работало бы вообще ничего. Повторяем запрос без
+    параметра и больше не шлём его этому серверу."""
+    bodies: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        payload = json.loads(request.content)
+        bodies.append(payload)
+        if "chat_template_kwargs" in payload:
+            return httpx.Response(400, json={"error": {"message":
+                "Unrecognized request argument supplied: chat_template_kwargs"}})
+        return _sse('{"choices":[{"delta":{"content":"ответ"}}]}')
+
+    llm_module._TEMPLATE_KWARGS_UNSUPPORTED.clear()
+    _enable(client, "edge-admin")
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+
+    body = _ask(client)
+    assert "ответ" in body, "повтор без параметра не сработал"
+    assert "chat_template_kwargs" in bodies[0]
+    assert "chat_template_kwargs" not in bodies[1]
+
+    # Второй вопрос уходит сразу без параметра — лишнего круга больше нет
+    bodies.clear()
+    _ask(client)
+    assert len(bodies) == 1 and "chat_template_kwargs" not in bodies[0]
+    llm_module._TEMPLATE_KWARGS_UNSUPPORTED.clear()
+
+
+def test_local_server_still_gets_template_kwargs(client, edge_admin, monkeypatch):
+    """Отказ одного сервера не должен лишать параметра локальную llama.cpp:
+    на ней он и держит режим размышлений."""
+    bodies: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        bodies.append(json.loads(request.content))
+        return _sse('{"choices":[{"delta":{"content":"ок"}}]}')
+
+    llm_module._TEMPLATE_KWARGS_UNSUPPORTED.add(PROVIDER)
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+    _ask(client)                       # админ не отмечен — идёт на .env
+    assert "chat_template_kwargs" in bodies[0]
+    llm_module._TEMPLATE_KWARGS_UNSUPPORTED.clear()
+
+
+def test_other_400_is_not_mistaken_for_template_kwargs(client, edge_admin, monkeypatch):
+    """Обычная четырёхсотая не должна молча повторяться и терять причину."""
+    calls = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(400, json={"error": {"message": "model not found"}})
+
+    llm_module._TEMPLATE_KWARGS_UNSUPPORTED.clear()
+    _enable(client, "edge-admin")
+    monkeypatch.setattr(llm_module, "_transport", httpx.MockTransport(handler))
+    body = _ask(client)
+    assert "model not found" in body
+    assert len(calls) == 1, "повтор не нужен"

@@ -73,6 +73,33 @@ CONTEXT_OVERFLOW_MESSAGE = (
 )
 
 
+# Серверы, отвергшие chat_template_kwargs. Параметр придуман в llama.cpp; у
+# внешних провайдеров лишнее поле в теле запроса — повод ответить 400, и без
+# этой памяти у отмеченных сотрудников не работал бы ни один запрос: перенос
+# размышлений (PRESERVE_THINKING) включён по умолчанию и уходит в каждом.
+# Ключ — адрес сервера: локальная llama.cpp параметр по-прежнему получает.
+_TEMPLATE_KWARGS_UNSUPPORTED: set[str] = set()
+_TEMPLATE_KWARGS_MARKERS = ("chat_template_kwargs", "unrecognized request argument",
+                            "unknown field", "extra fields not permitted",
+                            "additional properties are not allowed")
+
+
+def _accepts_template_kwargs(base_url: str) -> bool:
+    return base_url.rstrip("/") not in _TEMPLATE_KWARGS_UNSUPPORTED
+
+
+def _remember_no_template_kwargs(base_url: str, status_code: int, body: str,
+                                 payload: dict) -> bool:
+    """Не из-за chat_template_kwargs ли отказ. Если да — запомнить адрес."""
+    if status_code != 400 or "chat_template_kwargs" not in payload:
+        return False
+    low = body.lower()
+    if not any(marker in low for marker in _TEMPLATE_KWARGS_MARKERS):
+        return False
+    _TEMPLATE_KWARGS_UNSUPPORTED.add(base_url.rstrip("/"))
+    return True
+
+
 def _http_error(status_code: int, body: str) -> LLMError:
     if any(marker in body.lower() for marker in _CONTEXT_OVERFLOW_MARKERS):
         return LLMError(CONTEXT_OVERFLOW_MESSAGE)
@@ -331,12 +358,15 @@ async def stream_chat(
         payload["tools"] = tools
     # Qwen3 + llama.cpp (--jinja): и выключение thinking, и перенос прошлых
     # размышлений задаются через параметры шаблона чата, а не флагами сервера —
-    # так режим можно менять на лету, не перезапуская llama.cpp.
-    if not enable_thinking:
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
-    elif preserve_thinking:
-        # Шаблон отрисует <think> из reasoning_content прошлых ответов
-        payload["chat_template_kwargs"] = {"preserve_thinking": True}
+    # так режим можно менять на лету, не перезапуская llama.cpp. Сторонний
+    # провайдер такого параметра не знает и вправе отвергнуть весь запрос —
+    # см. _TEMPLATE_KWARGS_UNSUPPORTED ниже.
+    if _accepts_template_kwargs(conn["base_url"]):
+        if not enable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        elif preserve_thinking:
+            # Шаблон отрисует <think> из reasoning_content прошлых ответов
+            payload["chat_template_kwargs"] = {"preserve_thinking": True}
     tool_calls: dict[int, dict] = {}
     stats: dict = {}
     finish_reason = ""
@@ -350,6 +380,17 @@ async def stream_chat(
             async with client.stream("POST", "/chat/completions", json=payload) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode("utf-8", "replace")[:500]
+                    if _remember_no_template_kwargs(conn["base_url"], response.status_code,
+                                                    body, payload):
+                        # Сервер отверг параметр шаблона чата. Он ещё ничего не
+                        # прислал, поэтому повтор без параметра безопасен — и
+                        # делается один раз: дальше мы этому адресу его не шлём.
+                        async for item in stream_chat(messages, tools=tools,
+                                                      enable_thinking=enable_thinking,
+                                                      preserve_thinking=preserve_thinking,
+                                                      conn=conn):
+                            yield item
+                        return
                     raise _http_error(response.status_code, body)
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):

@@ -132,6 +132,14 @@ async def chat_completions(request: Request):
     if "ERROR500" in last_user:
         return JSONResponse({"error": "mock internal error"}, status_code=500)
 
+    if "CONTEXT_OVERFLOW" in last_user:
+        # Формулировка llama.cpp при запросе длиннее контекста
+        return JSONResponse({"error": {
+            "code": 400, "type": "exceed_context_size_error",
+            "message": "the request exceeds the available context size, "
+                       "try increasing the context size or enable context shift"}},
+            status_code=400)
+
     slow = "SLOW" in last_user  # для ручной проверки кнопки «Остановить»
 
     trigger = _find_trigger(last_user) if body.get("tools") else None

@@ -1264,10 +1264,34 @@ async function sendMessage() {
   await submitTurn(chatId, content, attachments);
 }
 
+// Заметка хода: маска ПДн, сбой базы знаний, остановка, ошибка. Сервер их в
+// сообщении не хранит, а сразу после хода история перечитывается из БД и
+// затирает живой узел ответа — поэтому каждую заметку запоминаем и возвращаем
+// после перечитывания. Без этого они мелькали и пропадали: пользователь
+// успевал разве что сделать снимок экрана.
+function turnNote(store, cls, text) {
+  store.push({ cls, text });
+  const note = document.createElement("div");
+  note.className = cls ? `msg-note ${cls}` : "msg-note";
+  note.textContent = text;
+  return note;
+}
+
+function restoreTurnNotes(store) {
+  if (!store.length) return;
+  for (const { cls, text } of store) {
+    const note = document.createElement("div");
+    note.className = cls ? `msg msg-note ${cls}` : "msg msg-note";
+    note.textContent = text;
+    els.messages.appendChild(note);
+  }
+  scrollToBottom();
+}
+
 // Расшифровка картинки идёт первым делом на ходу и занимает столько же, сколько
 // обычный ответ. Пока она идёт — плашка в ответе, чтобы не выглядело зависанием;
 // когда готова — сворачиваемый блок под самой картинкой, к которой относится.
-function onAttachmentEvent(st, userNode, data) {
+function onAttachmentEvent(st, userNode, data, turnNotes) {
   const { live, liveBody } = st;
   let note = live.querySelector(".attach-progress");
   if (data.status === "pages") {
@@ -1287,10 +1311,10 @@ function onAttachmentEvent(st, userNode, data) {
   }
   if (note) note.remove();
   if (data.status === "error") {
-    const err = document.createElement("div");
-    err.className = "msg-note msg-error";
-    err.textContent = data.detail;
-    live.insertBefore(err, liveBody);
+    // «Не удалось расшифровать изображение» — тоже заметка хода: без возврата
+    // после перечитывания истории пользователь не узнает, что на следующих
+    // вопросах модель картинку уже не увидит.
+    live.insertBefore(turnNote(turnNotes, "msg-error", data.detail), liveBody);
     return;
   }
   // Готово: заменяем в запросе пометку об имени файла на блок с расшифровкой
@@ -1332,7 +1356,10 @@ async function submitTurn(chatId, content, attachments) {
 
   let renamed = null;
   let failed = false;
-  let failMessage = "";
+  // Заметки этого хода: ПДн, сбой базы знаний, остановка, ошибка. В сообщении
+  // они не хранятся, а история перечитывается из БД сразу после хода — без
+  // возврата они мелькали и пропадали.
+  const turnNotes = [];
   try {
     const r = await fetch(`/api/chats/${chatId}/messages`, {
       method: "POST",
@@ -1378,17 +1405,12 @@ async function submitTurn(chatId, content, attachments) {
         } else if (event === "sources") {
           live.insertBefore(sourcesBlock(data.text), liveBody);
         } else if (event === "pii_masked") {
-          const note = document.createElement("div");
-          note.className = "msg-note pii-note";
-          note.textContent = `🛡 Заменено элементов ПДн: ${data.count}`;
-          live.insertBefore(note, liveBody);
+          live.insertBefore(turnNote(turnNotes, "pii-note",
+                                     `🛡 Заменено элементов ПДн: ${data.count}`), liveBody);
         } else if (event === "rag_error") {
-          const note = document.createElement("div");
-          note.className = "msg-note msg-error";
-          note.textContent = data.detail;
-          live.insertBefore(note, liveBody);
+          live.insertBefore(turnNote(turnNotes, "msg-error", data.detail), liveBody);
         } else if (event === "attachment") {
-          onAttachmentEvent(st, userNode, data);
+          onAttachmentEvent(st, userNode, data, turnNotes);
         } else if (event === "error") throw new Error(data.detail);
         else if (event === "done") {
           if (data.title) renamed = data.title;
@@ -1404,22 +1426,15 @@ async function submitTurn(chatId, content, attachments) {
     }
   } catch (e) {
     if (e.name === "AbortError") {
-      const note = document.createElement("div");
-      note.className = "msg-note";
-      note.textContent = "Генерация остановлена пользователем";
-      live.appendChild(note);
+      live.appendChild(turnNote(turnNotes, "", "Генерация остановлена пользователем"));
       els.announce("Генерация остановлена");
     } else {
-      // Плашку показываем ещё и всплывающим сообщением: живой узел ответа
-      // ниже затирается перечитыванием истории из БД, а ошибки в ней нет —
-      // и пользователь оставался вообще без объяснения, почему нет ответа.
-      failMessage = e.message || "Ошибка при обращении к модели";
-      const note = document.createElement("div");
-      note.className = "msg-note msg-error";
-      note.textContent = failMessage;
-      live.appendChild(note);
-      els.announce(failMessage);
-      els.toast(failMessage, true);
+      // Ошибку показываем ещё и всплывающим сообщением: она висит до закрытия,
+      // а заметка в ленте может уехать за нижний край длинного ответа.
+      const text = e.message || "Ошибка при обращении к модели";
+      live.appendChild(turnNote(turnNotes, "msg-error", text));
+      els.announce(text);
+      els.toast(text, true);
     }
     failed = true;
   } finally {
@@ -1438,16 +1453,7 @@ async function submitTurn(chatId, content, attachments) {
     if (chatId === activeChatId) {
       updateInputState();
       await loadMessages().catch(() => {});
-      // История хранит только сам вопрос: ответа не было. Возвращаем плашку
-      // с причиной под последним сообщением, иначе выходит, что вопрос
-      // отправлен и молча пропал.
-      if (failMessage) {
-        const note = document.createElement("div");
-        note.className = "msg msg-note msg-error";
-        note.textContent = failMessage;
-        els.messages.appendChild(note);
-        scrollToBottom();
-      }
+      restoreTurnNotes(turnNotes);
       els.input.focus();
     }
   }
