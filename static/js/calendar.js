@@ -1,5 +1,9 @@
 // Раздел «Календарь»: вид «Месяц», «Список ближайших», модальное окно события.
 import { api } from "/static/js/api.js";
+// Здесь свои openModal/closeModal для окна события, поэтому общие — под
+// псевдонимами: иначе объявления столкнутся и модуль не загрузится вовсе.
+import { bindBackdropClose, closeModal as closeDialog, openModal as openDialog }
+  from "/static/js/modal.js";
 
 const LIST_DAYS = 60; // горизонт «Списка ближайших»
 
@@ -68,10 +72,10 @@ export function initCalendar(toastFn, currentUser) {
   els.fAllDay.addEventListener("change", syncAllDay);
   els.fScope.addEventListener("change", syncGroupPicker);
   if (canChooseGroup) loadGroupOptions();
-  els.modal.addEventListener("click", (e) => { if (e.target === els.modal) closeModal(); });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !els.modal.hidden) closeModal();
-  });
+  // Подложка и Escape — общие для всех окон (см. static/js/modal.js).
+  // Сброс правившегося события делает onClose, переданный в openModal:
+  // иначе закрытие по Escape оставляло бы editingEventId от прошлой правки.
+  bindBackdropClose(els.modal);
 
   window.addEventListener("section-shown", (e) => {
     if (e.detail === "calendar") refresh();
@@ -386,14 +390,14 @@ function openModal(ev, presetDay) {
 
   els.deleteBtn.hidden = !ev;
   syncAllDay();
-  els.modal.hidden = false;
-  els.fTitle.focus();
+  openDialog(els.modal, els.fTitle, () => {
+    editingEventId = null;
+    editingEvent = null;
+  });
 }
 
 function closeModal() {
-  els.modal.hidden = true;
-  editingEventId = null;
-  editingEvent = null;
+  closeDialog(els.modal);   // сброс правившегося события — в onClose выше
 }
 
 function fieldsToRange() {

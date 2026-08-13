@@ -2,6 +2,7 @@
 import { api } from "/static/js/api.js";
 import { bindCodeCopy, copyWithFeedback } from "/static/js/clipboard.js";
 import { escapeHtml, renderMarkdown } from "/static/js/markdown.js";
+import { bindBackdropClose, closeModal, openModal } from "/static/js/modal.js";
 
 let chats = [];
 let activeChatId = null;
@@ -67,10 +68,8 @@ export function initChat(toast, announce) {
 
   els.promptBtn.addEventListener("click", openPromptModal);
   $("prompt-save-btn").addEventListener("click", savePromptSettings);
-  $("prompt-cancel-btn").addEventListener("click", () => { els.promptModal.hidden = true; });
-  els.promptModal.addEventListener("click", (e) => {
-    if (e.target === els.promptModal) els.promptModal.hidden = true;
-  });
+  $("prompt-cancel-btn").addEventListener("click", () => closeModal(els.promptModal));
+  bindBackdropClose(els.promptModal);
 
   loadSpecializations();
   loadExamples();
@@ -249,8 +248,7 @@ function openPromptModal() {
   }));
   els.promptSpec.value = chat.specialization_id === null ? "" : String(chat.specialization_id);
   els.promptCustom.value = chat.custom_prompt || "";
-  els.promptModal.hidden = false;
-  els.promptCustom.focus();
+  openModal(els.promptModal, els.promptCustom);
 }
 
 async function savePromptSettings() {
@@ -262,7 +260,7 @@ async function savePromptSettings() {
       custom_prompt: els.promptCustom.value,
     }});
     Object.assign(chat, updated);
-    els.promptModal.hidden = true;
+    closeModal(els.promptModal);
     updatePromptButton();
     els.toast("Настройки чата сохранены — действуют со следующего сообщения");
   } catch (e) {

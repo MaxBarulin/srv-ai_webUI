@@ -4,6 +4,7 @@ import { formatCalcValue, initChat, setCalcAvailable, setRagAvailable }
   from "/static/js/chat.js";
 import { initNotes } from "/static/js/notes.js";
 import { initCalendar } from "/static/js/calendar.js";
+import { bindBackdropClose, closeModal, openModal } from "/static/js/modal.js";
 
 const SECTIONS = {
   chat: "Чат",
@@ -481,12 +482,12 @@ function openMethod(m) {
   document.getElementById("method-try-hint").textContent = m
     ? "подставьте значения параметров и проверьте расчёт"
     : "сохраните методику, затем подставьте значения";
-  document.getElementById("method-modal").hidden = false;
-  document.getElementById("method-name").focus();
+  openModal(document.getElementById("method-modal"),
+            document.getElementById("method-name"));
 }
 
 function closeMethod() {
-  document.getElementById("method-modal").hidden = true;
+  closeModal(document.getElementById("method-modal"));
 }
 
 async function saveMethod(e) {
@@ -1125,14 +1126,12 @@ async function init() {
   applyFontScale(currentUser.font_scale ?? 1);
   const profileModal = document.getElementById("profile-modal");
   document.getElementById("profile-btn").addEventListener("click", () => {
-    profileModal.hidden = false;
+    openModal(profileModal);
   });
   document.getElementById("profile-close-btn").addEventListener("click", () => {
-    profileModal.hidden = true;
+    closeModal(profileModal);
   });
-  profileModal.addEventListener("click", (e) => {
-    if (e.target === profileModal) profileModal.hidden = true;
-  });
+  bindBackdropClose(profileModal);
   document.getElementById("font-scale").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-scale]");
     if (btn) setFontScale(Number(btn.dataset.scale));
@@ -1160,9 +1159,7 @@ async function init() {
   document.getElementById("method-form").addEventListener("submit", saveMethod);
   document.getElementById("method-cancel-btn").addEventListener("click", closeMethod);
   document.getElementById("method-try-btn").addEventListener("click", tryMethod);
-  document.getElementById("method-modal").addEventListener("click", (e) => {
-    if (e.target.id === "method-modal") closeMethod();
-  });
+  bindBackdropClose(document.getElementById("method-modal"));
   document.getElementById("feedback-export-btn").addEventListener("click", exportFeedback);
   document.getElementById("audit-refresh").addEventListener("click", () => { auditOffset = 0; loadAudit(); });
   document.getElementById("audit-action").addEventListener("change", () => { auditOffset = 0; loadAudit(); });
