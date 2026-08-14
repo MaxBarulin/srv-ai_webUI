@@ -20,8 +20,27 @@ function focusableIn(root) {
     .filter((el) => el.offsetParent !== null && !el.closest("[hidden]"));
 }
 
+/** Верхнее окно, которое сейчас действительно на экране.
+ *
+ * Раздел можно сменить, не закрыв окно, — кнопкой «назад» браузера или сменой
+ * hash. Окно уезжает вместе с разделом, но остаётся в стопке: достижимых
+ * элементов в нём больше нет, и ловушка гасила КАЖДЫЙ Tab — страница
+ * переставала слушаться клавиатуры вовсе, а закрыть невидимое окно
+ * пользователю нечем. Такие окна снимаем со стопки сами.
+ */
+function topModal() {
+  while (open.length) {
+    const top = open[open.length - 1];
+    // Проверяем по атрибуту, а не по offsetParent: подложка position: fixed,
+    // и offsetParent у неё null даже когда она на виду.
+    if (!top.backdrop.hidden && !top.backdrop.closest("[hidden]")) return top;
+    closeModal(top.backdrop);
+  }
+  return null;
+}
+
 function onKeydown(e) {
-  const top = open[open.length - 1];
+  const top = topModal();
   if (!top) return;
 
   if (e.key === "Escape") {
