@@ -1890,3 +1890,28 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   #pdf-print .table-wrap { overflow: visible; }
   @page { margin: 18mm 16mm; }
 }
+
+/* ===== Пониженное движение (prefers-reduced-motion) =====
+   Все четыре анимации — бесконечные индикаторы активности; у каждого есть
+   статичный признак, который остаётся: у спиннеров — рамка с красным верхом,
+   у курсора — сам символ, у фазы размышлений — живая выписка в заголовке.
+   Селекторы повторяют исходные один в один: той же специфичностью и ниже
+   по файлу — иначе правило не перевесит. */
+@media (prefers-reduced-motion: reduce) {
+  .chat-spinner,
+  .msg.streaming .msg-body:empty::after,
+  .msg.streaming .msg-body > :last-child::after,
+  .msg.streaming .msg-body > ul:last-child > li:last-child::after,
+  .msg.streaming .msg-body > ol:last-child > li:last-child::after,
+  .reasoning.thinking summary {
+    animation: none;
+  }
+  /* Шиммер без движения — застывшая красная полоса посреди слова; вместо
+     этого обычный приглушённый текст */
+  .reasoning.thinking summary {
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: var(--osk-slate);
+  }
+}
