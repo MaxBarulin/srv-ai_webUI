@@ -55,6 +55,7 @@
   --osk-red: #BE1E2D;
   --osk-red-dark: #9E1826;
   --osk-slate: #5B6670;      /* приглушённый текст, подписи */
+  --osk-dark-muted: #9AA3AA; /* приглушённый текст НА тёмной поверхности (сайдбар): slate там даёт 2,5:1 */
   --osk-dark: #1E2A33;       /* тёмная ПОВЕРХНОСТЬ: сайдбар, код, пузырь запроса */
   --osk-dark-2: #162027;
   --osk-paper: #FFFFFF;      /* карточки, поля, пузырь ответа */
@@ -79,6 +80,7 @@
   --osk-red: #E23744;        /* акцент чуть ярче — на тёмном насыщенный глохнет */
   --osk-red-dark: #C62A38;
   --osk-slate: #8A97A2;
+  --osk-dark-muted: #8A97A2;
   --osk-dark: #0E1317;       /* поверхности ещё темнее фона (сайдбар, код) */
   --osk-dark-2: #0A0E11;
   --osk-paper: #1B2229;      /* карточки на тон светлее фона — «слои» */
@@ -357,7 +359,7 @@ summary:focus-visible,
   padding: 14px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 12px;
-  color: var(--osk-slate);
+  color: var(--osk-dark-muted);
 }
 
 /* --- Шапка рабочей области --- */
@@ -630,7 +632,7 @@ table.users select.group-select { width: 100%; min-width: 140px; }
 .chat-item .chat-action {
   border: 0;
   background: none;
-  color: var(--osk-slate);
+  color: var(--osk-dark-muted);
   cursor: pointer;
   padding: 4px 6px;
   font-size: 13px;
@@ -1302,7 +1304,7 @@ details.attach-chip > .attach-doc-body { max-height: 30vh; }
   border: 1px solid rgba(255, 255, 255, 0.16);
   color: #E8EBED;
 }
-.notes-filters input::placeholder { color: var(--osk-slate); }
+.notes-filters input::placeholder { color: var(--osk-dark-muted); }
 .notes-filters select option { background: var(--osk-dark); color: #E8EBED; }
 
 .notes-list {
